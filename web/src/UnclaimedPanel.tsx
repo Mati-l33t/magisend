@@ -14,6 +14,18 @@ interface Unclaimed {
   set_aside: number;
   known: boolean;
 }
+interface MissingFile {
+  id: string;
+  name: string;
+  owner: string;
+  size: number;
+  location: string;
+  library: boolean;
+}
+interface MissingState {
+  count: number;
+  files: MissingFile[];
+}
 interface UnclaimedState {
   count: number;
   size: number;
@@ -29,6 +41,7 @@ const shown = 10;
 export function UnclaimedPanel({ changed }: { changed?: () => void }) {
   useLanguage();
   const [state, setState] = useState<UnclaimedState | null>(null);
+  const [missing, setMissing] = useState<MissingState | null>(null);
   const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useMessage();
@@ -36,6 +49,8 @@ export function UnclaimedPanel({ changed }: { changed?: () => void }) {
   async function load() {
     const next = await api<UnclaimedState>('/api/admin/storage/unclaimed');
     setState(next && Array.isArray(next.files) ? next : null);
+    const gone = await api<MissingState>('/api/admin/storage/missing').catch(() => null);
+    setMissing(gone && Array.isArray(gone.files) ? gone : null);
   }
   useEffect(() => {
     load().catch(() => setState(null));
@@ -54,7 +69,8 @@ export function UnclaimedPanel({ changed }: { changed?: () => void }) {
       setBusy(false);
     }
   }
-  if (!state || (state.count === 0 && !note)) return null;
+  const lost = missing && missing.count > 0 ? missing : null;
+  if (!state || (state.count === 0 && !note && !lost)) return null;
   const list = all ? state.files : state.files.slice(0, shown);
   return (
     <section className="panel admin-wide unclaimed-files">
@@ -103,6 +119,40 @@ export function UnclaimedPanel({ changed }: { changed?: () => void }) {
             </button>
           )}
           <p className="muted">{t('unclaimed.restoreHint')}</p>
+        </>
+      )}
+      {lost && (
+        <>
+          <h3 className="backup-heading">{t('missing.title')}</h3>
+          <p className="muted">{t('missing.intro', { count: formatNumber(lost.count) })}</p>
+          <ul className="token-list">
+            {lost.files.slice(0, shown).map((f) => (
+              <li key={f.id}>
+                <div>
+                  <strong>{f.name}</strong>
+                  <small>
+                    {[t('unclaimed.owner', { name: f.owner }), formatBytes(f.size)].join(' · ')}
+                  </small>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="setting-actions">
+            <button
+              type="button"
+              className="secondary danger"
+              disabled={busy}
+              onClick={() => {
+                if (window.confirm(t('missing.removeConfirm', { count: formatNumber(lost.count) })))
+                  void run(async () => {
+                    await api('/api/admin/storage/missing', 'DELETE', {});
+                  });
+              }}
+            >
+              <Trash2 size={16} />
+              {t('missing.remove')}
+            </button>
+          </div>
         </>
       )}
       {error && (

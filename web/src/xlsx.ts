@@ -209,15 +209,21 @@ export async function readWorkbook(zip: JSZip, locale: string): Promise<Sheet[]>
         (rows[index] ??= [])[col] = { text, number, bold: style?.bold ?? false };
       }
     }
+    // A sheet can describe far more merges and columns than are shown; the
+    // work done for them is capped, so a crafted file cannot freeze the tab.
+    let mergeBudget = maxRows * maxCols;
+    let merges = 0;
     for (const merge of all(doc, 'mergeCell')) {
+      if (++merges > 10000 || mergeBudget <= 0) break;
       const [from, to] = (merge.getAttribute('ref') ?? '').split(':');
       if (!from || !to) continue;
       const a = position(from);
       const b = position(to);
-      if (a.row >= maxRows || a.col >= maxCols) continue;
+      if (a.row < 0 || a.col < 0 || a.row >= maxRows || a.col >= maxCols) continue;
       const rowsSpan = Math.min(b.row, maxRows - 1) - a.row + 1;
       const colsSpan = Math.min(b.col, maxCols - 1) - a.col + 1;
-      if (rowsSpan < 1 || colsSpan < 1 || rowsSpan * colsSpan > 100000) continue;
+      if (rowsSpan < 1 || colsSpan < 1 || rowsSpan * colsSpan > mergeBudget) continue;
+      mergeBudget -= rowsSpan * colsSpan;
       for (let y = a.row; y < a.row + rowsSpan; y++)
         for (let x = a.col; x < a.col + colsSpan; x++)
           if (y !== a.row || x !== a.col)
@@ -227,8 +233,11 @@ export async function readWorkbook(zip: JSZip, locale: string): Promise<Sheet[]>
     }
     const widths: number[] = [];
     for (const col of all(doc, 'col')) {
-      const min = Number(col.getAttribute('min') ?? 1) - 1;
-      const max = Math.min(Number(col.getAttribute('max') ?? 1) - 1, maxCols - 1);
+      const first = Number(col.getAttribute('min') ?? 1);
+      const last = Number(col.getAttribute('max') ?? 1);
+      if (!Number.isInteger(first) || !Number.isInteger(last)) continue;
+      const min = Math.max(first - 1, 0);
+      const max = Math.min(last - 1, maxCols - 1);
       const width = Number(col.getAttribute('width') ?? 0);
       for (let i = min; i <= max; i++)
         widths[i] = col.getAttribute('hidden') === '1' ? 0 : Math.round(width * 7 + 5);

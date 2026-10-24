@@ -236,7 +236,8 @@ func (a *App) updateLibraryShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	if _, e = tx.Exec("UPDATE shares SET title=?,expires=?,download_limit=? WHERE id=?", s.Title, s.Expires, s.DownloadLimit, s.ID); internal(w, e) {
+	// A new expiry gets a new reminder.
+	if _, e = tx.Exec("UPDATE shares SET title=?,expires=?,download_limit=?,reminded=CASE WHEN expires=? THEN reminded ELSE 0 END WHERE id=?", s.Title, s.Expires, s.DownloadLimit, s.Expires, s.ID); internal(w, e) {
 		return
 	}
 	if b.Password != nil {

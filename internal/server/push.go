@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -120,7 +121,13 @@ func publicAddress(ip net.IP) bool {
 	return true
 }
 
-func pushClient(allowLocal bool) *http.Client {
+// The two push clients are made once and shared, so idle connections are
+// reused and time out instead of piling up with every delivery.
+var pushClients = map[bool]*http.Client{false: newPushClient(false), true: newPushClient(true)}
+
+func pushClient(allowLocal bool) *http.Client { return pushClients[allowLocal] }
+
+func newPushClient(allowLocal bool) *http.Client {
 	dialer := &net.Dialer{
 		Timeout: 5 * time.Second,
 		Control: func(_, address string, _ syscall.RawConn) error {
@@ -139,6 +146,9 @@ func pushClient(allowLocal bool) *http.Client {
 			DialContext:           dialer.DialContext,
 			TLSHandshakeTimeout:   5 * time.Second,
 			ResponseHeaderTimeout: 10 * time.Second,
+			IdleConnTimeout:       30 * time.Second,
+			MaxIdleConns:          16,
+			MaxIdleConnsPerHost:   2,
 		},
 		// A redirect could lead anywhere; services that need one are not supported.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -226,6 +236,7 @@ func (a *App) deliver(c PushChannel, m pushMessage) error {
 	if e == nil {
 		var response *http.Response
 		if response, e = pushClient(a.pushAllowsLocal()).Do(r); e == nil {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
 			response.Body.Close()
 			if response.StatusCode < 200 || response.StatusCode > 299 {
 				e = fmt.Errorf("status %d", response.StatusCode)
@@ -457,6 +468,11 @@ func (a *App) pushRoutes(m *http.ServeMux) {
 		a.mu.Lock()
 		u, ok := a.require(w, r, false)
 		var found *PushChannel
+		if ok && a.limited("push-test:"+u.ID) {
+			a.mu.Unlock()
+			fail(w, 429, "too_many_attempts_wait")
+			return
+		}
 		if ok {
 			for _, c := range a.channels(u.ID, "") {
 				if c.ID == r.PathValue("id") {

@@ -61,7 +61,7 @@ location / {
 
 Administrators see new releases under **Administration → Updates**. The update button (or `/opt/magisend/update.sh` as root) looks up the latest release on GitHub and only continues if it is newer than the installed version. It downloads the release, its `SHA256SUMS` and `SHA256SUMS.sig`, and has the installed MagiSend check the signature (see below) and the checksum. Then it stops MagiSend, copies the database, snapshots the files in the data folder with hard links (instant, no extra space), installs the new version and waits for it to report healthy. If anything fails after MagiSend was stopped, or the new version does not report healthy, the previous program, database and files are restored and started again. Files on added storage locations are not snapshotted; a new version does not change them while it starts. The result is shown in the web interface.
 
-The updater runs as root. It keeps its status and the snapshot in `/var/lib/magisend-update`, next to the data folder, which only root can write, and never writes into the data folder the app itself can change.
+The updater runs as root. It keeps its status and the snapshot in `/var/lib/magisend-update`, a folder only root can write (it refuses to run if any folder above it can be written by others). It writes into the data folder only during a rollback, after MagiSend was stopped: it clears the exact database file names and the file store, then puts the saved ones back. The database files are only saved if they are plain files. The file store is snapshotted with hard links when the data folder shares a file system with `/var/lib`; otherwise it is left as it is (stored files are never changed in place) and only the database is rolled back.
 
 ### Release signatures
 
@@ -92,6 +92,12 @@ systemctl start magisend
 To restore, stop the service, replace `/var/lib/magisend` with the archive contents (owned by `magisend`), and start it again with the same or a newer MagiSend version. Downgrading the program alone is not supported once newer versions have written data.
 
 Docker (with the container stopped): `docker run --rm -v magisend_data:/data -v "$PWD":/backup alpine tar -czf /backup/magisend.tgz -C /data .`
+
+### Built-in backups
+
+**Administration → Backups** makes archives while MagiSend keeps running: always the database, and optionally the files in the data folder and on added storage locations. Each archive carries a `RESTORE.txt`. Archive names include this installation's ID, so several installations can share one backup folder without listing or deleting each other's archives. A backup that could not copy everything (a storage location offline, an unreadable file) is named `…-incomplete.tar`, lists what is missing in `MISSING.txt`, and is reported on the page; the newest complete archive is always kept, however many incomplete ones follow. A backup that makes no progress for ten minutes (a share that stopped answering) is given up.
+
+Restoring an older database next to newer files is safe: MagiSend starts even if files the database knows were deleted since (they are listed under **Administration → Storage**, where they can be removed), and files the database does not know are set aside for 30 days instead of deleted, to be put back from the same page.
 
 ## Uninstall
 

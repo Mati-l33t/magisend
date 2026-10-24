@@ -122,6 +122,6 @@ if [ -r "$DATA/setup-code" ]; then
   echo "  Open the address above and create the administrator account with this code."
   echo "  It is also in $DATA/setup-code until the account exists."
 else
-  echo "  Create the administrator account in the browser now."
+  echo "  If the administrator account does not exist yet, create it in the browser with the setup code you chose (MAGISEND_SETUP_CODE)."
 fi
 echo "  Settings: $ENV_DIR/environment   Logs: journalctl -u magisend"

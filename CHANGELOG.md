@@ -2,6 +2,18 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## 1.0.6
+
+Fixes from a full review of the code.
+
+- **Restores:** MagiSend starts after an older database was restored even when files were deleted since; they are listed under Administration → Storage to remove. Restoring a text version never replaces the newest one. A file moved away and back during a backup keeps its data.
+- **Accounts:** a sign-in racing a password change no longer keeps a session; an administrator's own password and two-step login change only in their account settings; replacing the authenticator or renewing recovery codes needs the current code; changing the account email needs the password and tells the old address; failed sign-ins by others no longer lock out a browser that signed in before; password-reset answers take the same time whether or not an account matched; deleting an account removes its API tokens; recipients cannot write into a disabled account's links; shared pages ask for the two-step code.
+- **Limits:** request bodies are read before the server's lock is taken; write requests and uploads have per-visitor slots; rate-limit keys stay short; the right password of a protected link always works; API-token uploads reserve their space before writing and must keep moving; push notifications reuse connections and test sends are limited; at most two thumbnails are decoded in a request when the queue is full.
+- **Files:** a ZIP being unpacked cannot be written to or discarded meanwhile, and its files are checked before they are shown; storage moves copy a file again if it changed; replaced and restored versions on links that remove photo location are cleaned too; large TIFF files and compressed PNG metadata are cleaned; the version limit counts versions; long multibyte note titles no longer break saving.
+- **Backups:** archives carry the installation's ID, incomplete ones are marked and never push out the last complete one, unreadable files no longer abort a backup, a backup stuck on a share is given up, location markers are included, leftovers are cleaned, and the database copy is private.
+- **Updates and installs:** the updater keeps its working folder at /var/lib/magisend-update, saves only plain database files, never copies the whole file store, and rolls back when stopped by a signal; Docker images are built only from signed, published releases; the Proxmox installer passes the root password on standard input and says when the console signs in without one.
+- **Links in emails** use the address the administrator set, and share emails need one; extending a library link resets its expiry reminder; Manage share keeps the expiry unless a new one is chosen and never saves recipients it could not load; files shared from another app wait for a confirmation; a crafted spreadsheet or Office file can no longer freeze or exhaust the browser tab.
+
 ## 1.0.5
 
 Follow-ups from a security review.

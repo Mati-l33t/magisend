@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Select } from './Select';
+
+const UNCHANGED = -1;
 import { api, shareUrl, type Share, type Capabilities } from './api';
 import { Modal } from './Modal';
 import { DownloadLimitSelect, limitHint, validityOptions } from './Downloads';
-import { t, useLanguage, useMessage } from './i18n';
+import { formatDate, t, useLanguage, useMessage } from './i18n';
 interface Permissions {
   recipients: string[];
   edit: boolean;
@@ -34,13 +36,8 @@ export default function LibraryShareDialog({
 }) {
   useLanguage();
   const [title, setTitle] = useState(share?.title || '');
-  const [days, setDays] = useState(
-    share
-      ? share.expires === 0
-        ? 0
-        : Math.max(1, Math.ceil((share.expires * 1000 - Date.now()) / 86400000))
-      : daysDefault,
-  );
+  // An existing link keeps its expiry unless a new one is picked.
+  const [days, setDays] = useState(share ? UNCHANGED : daysDefault);
   const [password, setPassword] = useState('');
   const [limit, setLimit] = useState(share?.download_limit || 0);
   const [clearPassword, setClearPassword] = useState(false);
@@ -52,6 +49,9 @@ export default function LibraryShareDialog({
   });
   const [recipients, setRecipients] = useState('');
   const [busy, setBusy] = useState(!!share);
+  // Recipients and rights are only sent once they were loaded, so a failed
+  // load never saves them as empty.
+  const [loaded, setLoaded] = useState(!share);
   const [error, setError] = useMessage();
   const [result, setResult] = useState<Share | null>(null);
   const live = share?.mode === 'live' || !!folder;
@@ -61,6 +61,7 @@ export default function LibraryShareDialog({
       .then((p) => {
         setPermissions(p);
         setRecipients(p.recipients.join(', '));
+        setLoaded(true);
       })
       .catch((e) => setError(e as Error))
       .finally(() => setBusy(false));
@@ -70,11 +71,10 @@ export default function LibraryShareDialog({
     setError('');
     try {
       const names = recipients.split(/[\s,]+/).filter(Boolean);
-      const next = { ...permissions, recipients: names };
+      const next = loaded ? { ...permissions, recipients: names } : {};
       const settings = {
         title: title || t('library.sharedFiles'),
-        days,
-        permanent: days === 0,
+        ...(days === UNCHANGED ? {} : { days, permanent: days === 0 }),
         download_limit: limit,
         ...(password || clearPassword ? { password } : {}),
       };
@@ -123,7 +123,23 @@ export default function LibraryShareDialog({
             label={t('share.validity')}
             value={days}
             onChange={setDays}
-            options={validityOptions([daysDefault, days])}
+            hint={share && days !== UNCHANGED ? t('edit.fromToday') : undefined}
+            options={[
+              ...(share
+                ? [
+                    {
+                      value: UNCHANGED,
+                      label: t('edit.unchanged', {
+                        current:
+                          share.expires === 0
+                            ? t('share.neverExpires')
+                            : t('share.expires', { date: formatDate(share.expires * 1000) }),
+                      }),
+                    },
+                  ]
+                : []),
+              ...validityOptions([daysDefault]),
+            ]}
           />
           <label>
             {t('auth.password')}
@@ -158,7 +174,7 @@ export default function LibraryShareDialog({
                 value={recipients}
                 aria-describedby="library-recipient-hint"
                 onChange={(e) => setRecipients(e.target.value)}
-                disabled={!caps.grant_edit}
+                disabled={!caps.grant_edit || !loaded}
               />
             </label>
             <small id="library-recipient-hint" className="field-hint">
@@ -173,6 +189,7 @@ export default function LibraryShareDialog({
                   checked={permissions[key]}
                   disabled={
                     busy ||
+                    !loaded ||
                     (!caps.grant_edit && !permissions[key]) ||
                     (key === 'add' && !live) ||
                     (limit > 0 && !permissions[key])

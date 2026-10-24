@@ -229,7 +229,7 @@ main() {
   defaults
   local mode
   mode=$(whiptail --backtitle "$TITLE" --title "SETTINGS" --menu "Create the MagiSend container with:" 12 64 2 \
-    default "Default settings (1 core, 512 MB, 4 GB, DHCP)" \
+    default "Default (1 core, 512 MB, 4 GB, DHCP, console signs in as root)" \
     advanced "Advanced settings" 3>&1 1>&2 2>&3) || die "Cancelled"
   [ "$mode" = advanced ] && advanced
   header
@@ -249,12 +249,10 @@ main() {
   net="name=eth0,bridge=$BRIDGE,ip=$NET"
   [ -n "$GATEWAY" ] && net+=",gw=$GATEWAY"
   [ -n "$VLAN" ] && net+=",tag=$VLAN"
-  local password=()
-  [ -n "$PASSWORD" ] && password=(--password "$PASSWORD")
   info "Creating container $CTID"
   pct create "$CTID" "$tmpl" --hostname "$HOSTNAME_" --cores "$CORES" --memory "$RAM" --swap 512 \
     --rootfs "$cstore:$DISK" --net0 "$net" --unprivileged 1 --features nesting=1 --onboot 1 \
-    --ostype debian --description "$(notes)" "${password[@]}" > /dev/null || die "Container creation failed"
+    --ostype debian --description "$(notes)" > /dev/null || die "Container creation failed"
   pct start "$CTID"
   ok "Container $CTID started"
 
@@ -265,6 +263,12 @@ main() {
   done
   pct exec "$CTID" -- getent hosts github.com > /dev/null 2>&1 || die "Container has no internet access"
   ok "Network ready"
+
+  # The password goes in on standard input, never on a command line where
+  # other processes on the host could read it.
+  if [ -n "$PASSWORD" ]; then
+    printf 'root:%s\n' "$PASSWORD" | pct exec "$CTID" -- chpasswd || die "Setting the root password failed"
+  fi
 
   info "Installing MagiSend (this takes about a minute)"
   ct bash -c "apt-get update -qq && apt-get -y -qq upgrade > /dev/null && apt-get install -y -qq curl ca-certificates locales > /dev/null" ||
@@ -296,6 +300,7 @@ main() {
   [ -n "$code" ] && echo -e "  Setup code: ${OR}${BOLD}${code}${CL} (also in /var/lib/magisend/setup-code in the container)"
   [ -n "$PUBLIC_URL" ] && echo -e "  Public address: ${OR}$PUBLIC_URL${CL} (point your reverse proxy to http://${ip}:${PORT})"
   echo -e "  Updates: Administration → Updates, or run ${BOLD}/opt/magisend/update.sh${CL} in the container."
+  [ -z "$PASSWORD" ] && echo -e "  The container's console signs in as root without a password. Set one with ${BOLD}pct exec $CTID -- passwd${CL} if others can open it."
   echo
 }
 

@@ -271,6 +271,8 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
     }
     setFiles(next);
   }
+  // Files that arrived from the share sheet, waiting to be confirmed.
+  const [sharedIn, setSharedIn] = useState<File[]>([]);
   // Files shared to the installed app from the system share sheet are parked
   // by the service worker; pick them up once, then forget them.
   useEffect(() => {
@@ -287,9 +289,10 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
       }
       await caches.delete('magisend-shared');
       history.replaceState(null, '', tabPaths.send);
+      // They are only added once confirmed: any website could send files here.
       if (incoming.length) {
         setTab('send');
-        select(incoming);
+        setSharedIn(incoming);
       }
     })().catch(() => setError(message('errors.sharedFiles')));
   }, []);
@@ -644,6 +647,33 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
             {error && (
               <div role="alert" className="error">
                 {error}
+              </div>
+            )}
+            {sharedIn.length > 0 && (
+              <div role="alert" className="notice shared-in">
+                <p>
+                  {t('shared.confirm', {
+                    count: formatNumber(sharedIn.length),
+                    names: sharedIn
+                      .slice(0, 3)
+                      .map((f) => f.name)
+                      .join(', '),
+                  })}
+                </p>
+                <div className="row-actions">
+                  <button className="quiet small" onClick={() => setSharedIn([])}>
+                    {t('shared.discard')}
+                  </button>
+                  <button
+                    className="primary small"
+                    onClick={() => {
+                      select(sharedIn);
+                      setSharedIn([]);
+                    }}
+                  >
+                    {t('shared.add')}
+                  </button>
+                </div>
               </div>
             )}
             {tab === 'send' && look !== 'classic' && fresh && result ? (

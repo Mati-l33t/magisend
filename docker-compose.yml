@@ -16,6 +16,9 @@ services:
       MAGISEND_PUBLIC_ORIGIN: ''
       # Address(es) of that reverse proxy, so rate limits see real visitors.
       MAGISEND_TRUSTED_PROXIES: ''
+      # The first administrator account needs a one-time setup code, shown in
+      # the log (docker compose logs magisend). To choose it yourself instead:
+      # MAGISEND_SETUP_CODE: pick-a-long-code
 
 volumes:
   magisend_data:

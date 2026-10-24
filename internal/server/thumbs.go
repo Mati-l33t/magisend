@@ -63,7 +63,15 @@ func (a *App) requestThumbnail(fileID string) {
 	select {
 	case a.thumbs <- fileID:
 	default:
-		// Queue saturated: do the bounded work here rather than dropping it.
+		// Queue saturated: decode here, but only a couple at a time; beyond
+		// that the request goes without (the page shows an icon and asks again
+		// on a later visit), so a burst cannot run the server out of memory.
+		select {
+		case a.thumbInline <- struct{}{}:
+			defer func() { <-a.thumbInline }()
+		default:
+			return
+		}
 		if e := a.generateThumbnail(fileID); e != nil {
 			a.noteThumbnailFailure(fileID, e)
 		}

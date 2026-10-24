@@ -7,16 +7,19 @@
 #
 # Only a newer release whose SHA256SUMS carries a valid release signature is
 # installed; the installed program checks the signature. Before switching
-# versions the service is stopped, the database is copied and the local file
-# store is snapshotted with hard links. If anything fails after the service
-# was stopped, or the new version does not come up healthy, the previous
-# program, database and local files are restored and started again. Files on
+# versions the service is stopped and the database files are saved; the
+# stored files are snapshotted with hard links when they are on the same file
+# system as the working folder (they are never changed in place, so they are
+# never copied). If anything fails after the service was stopped, it is
+# stopped by a signal, or the new version does not come up healthy, the
+# previous program and database are put back and started again. Files on
 # added storage locations are not snapshotted: a new version only reads them
 # while it starts.
 #
-# Everything root writes goes to a folder only root can write
-# (/var/lib/magisend-update next to the data folder), never into the data
-# folder the app itself can change.
+# Root keeps its status and snapshot in /var/lib/magisend-update, a folder
+# only root can write. It writes into the data folder only to put the saved
+# database and file store back, after MagiSend was stopped, and only to those
+# exact names, which it clears first.
 set -Eeuo pipefail
 
 APP_DIR=/opt/magisend
@@ -42,7 +45,7 @@ API=$(setting MAGISEND_UPDATE_API https://api.github.com)
 DOWNLOADS=$(setting MAGISEND_RELEASE_DOWNLOADS "https://github.com/$REPO/releases/download")
 export MAGISEND_LISTEN
 MAGISEND_LISTEN=$(setting MAGISEND_LISTEN 0.0.0.0:8080)
-STATE="$(dirname "$DATA")/magisend-update"
+STATE=/var/lib/magisend-update
 SNAPSHOT="$STATE/snapshot"
 FROM=""
 TO=""
@@ -86,10 +89,17 @@ recover() { # reason
   systemctl stop "$SERVICE"
   if [ "$INSTALLED" = 1 ] && [ "$SNAPSHOT_DONE" = 1 ]; then
     install -m 0755 "$SNAPSHOT/magisend" "$APP_DIR/magisend"
-    rm -f "$DATA"/magisend.sqlite*
-    cp -a "$SNAPSHOT"/magisend.sqlite* "$DATA/"
-    rm -rf "$DATA/blobs"
-    mv "$SNAPSHOT/blobs" "$DATA/blobs"
+    # Only the exact files that were saved go back. Whatever now has their
+    # names (a link or a folder the app made, say) is removed first, so root
+    # never writes through anything in the data folder.
+    for f in magisend.sqlite magisend.sqlite-wal magisend.sqlite-shm; do
+      rm -rf -- "${DATA:?}/$f"
+      [ -f "$SNAPSHOT/$f" ] && cp -p -- "$SNAPSHOT/$f" "$DATA/$f"
+    done
+    if [ -d "$SNAPSHOT/blobs" ]; then
+      rm -rf -- "${DATA:?}/blobs"
+      mv -- "$SNAPSHOT/blobs" "$DATA/blobs"
+    fi
   fi
   rm -rf "$SNAPSHOT"
   systemctl start "$SERVICE"
@@ -100,12 +110,15 @@ recover() { # reason
   fi
   exit 1
 }
-unexpected() { # line
+unexpected() { # line, or "signal"
+  local reason="Unexpected error at line $1"
+  [ "$1" = signal ] && reason="The update was stopped"
+  trap - TERM INT HUP
   if [ "$STOPPED" = 1 ]; then
-    recover "Unexpected error at line $1"
+    recover "$reason"
   fi
   trap - ERR
-  status failed "Unexpected error at line $1"
+  status failed "$reason"
   exit 1
 }
 
@@ -121,7 +134,14 @@ if [ -L "$STATE" ] || { [ -e "$STATE" ] && [ ! -d "$STATE" ]; }; then
 fi
 install -d -o root -g root -m 0755 "$STATE"
 [ "$(stat -c %u "$STATE")" = 0 ] || { echo "$STATE is not owned by root" >&2; exit 1; }
+# Every folder above it must be root's alone, or the app could move it.
+for dir in "$(dirname "$STATE")" "$(dirname "$(dirname "$STATE")")" /; do
+  [ "$(stat -c %u "$dir")" = 0 ] && [ $(($(stat -c %a "$dir" | sed 's/^.*\(..\)$/0\1/') & 022)) = 0 ] ||
+    { echo "$dir must be owned by root and writable only by root" >&2; exit 1; }
+done
 trap 'unexpected $LINENO' ERR
+# A stop or kill signal (systemd's timeout, say) also puts the old version back.
+trap 'unexpected signal' TERM INT HUP
 
 case $(uname -m) in
   x86_64) ARCH=amd64 ;;
@@ -161,10 +181,27 @@ systemctl stop "$SERVICE"
 rm -rf "$SNAPSHOT"
 mkdir -m 0700 "$SNAPSHOT"
 # Hard links take no time or space but need the same file system.
-link=-l
-[ "$(stat -c %d "$DATA")" = "$(stat -c %d "$STATE")" ] || link=""
-if ! { cp -a "$DATA"/magisend.sqlite* "$SNAPSHOT/" &&
-  cp -a $link "$DATA/blobs" "$SNAPSHOT/blobs" &&
+# The database files are saved only if they are plain files. The stored
+# files are snapshotted with hard links when they share a file system with
+# the working folder; otherwise they are left as they are (stored files are
+# never changed in place, so the database is what matters), never copied.
+save_database() {
+  local f
+  for f in magisend.sqlite magisend.sqlite-wal magisend.sqlite-shm; do
+    if [ -L "$DATA/$f" ] || { [ -e "$DATA/$f" ] && [ ! -f "$DATA/$f" ]; }; then
+      return 1
+    fi
+    [ -f "$DATA/$f" ] && cp -p -- "$DATA/$f" "$SNAPSHOT/$f"
+  done
+  return 0
+}
+snapshot_files() {
+  [ -d "$DATA/blobs" ] && [ ! -L "$DATA/blobs" ] || return 1
+  [ "$(stat -c %d "$DATA/blobs")" = "$(stat -c %d "$STATE")" ] || return 0
+  cp -al -- "$DATA/blobs" "$SNAPSHOT/blobs"
+}
+if ! { save_database &&
+  snapshot_files &&
   cp -a "$APP_DIR/magisend" "$SNAPSHOT/magisend" &&
   tar -czf "$BACKUP_DIR/magisend-db-$(clean "$FROM")-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" -C "$SNAPSHOT" \
     --exclude=blobs --exclude=magisend .; }; then

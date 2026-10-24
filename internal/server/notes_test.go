@@ -107,3 +107,17 @@ func TestNoteMoveAndRename(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// Long titles in scripts with multibyte characters still make a valid name.
+func TestLongMultibyteTitles(t *testing.T) {
+	for _, title := range []string{strings.Repeat("日本語のタイトル", 20), strings.Repeat("😀", 120)} {
+		name, _ := noteName(title, "", "en")
+		if !validFilename(name) {
+			t.Fatal("invalid name for", len(title), "bytes:", len(name))
+		}
+		name, _ = noteName("", title+"\nbody", "en")
+		if !validFilename(name) {
+			t.Fatal("invalid derived name", len(name))
+		}
+	}
+}

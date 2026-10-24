@@ -271,9 +271,12 @@ func (a *App) sendNotifications(now time.Time, closed string) {
 	}
 }
 
+// requestOrigin is the address links in emails, notifications and answers
+// use: the one the administrator set when there is one, so a request's Host
+// header never decides where they point; otherwise the request's own.
 func (a *App) requestOrigin(r *http.Request) string {
-	if a.publicOrigin != "" {
-		return a.publicOrigin
+	if origin := a.linkOrigin(); origin != "" {
+		return origin
 	}
 	scheme := "http"
 	if a.secureRequest(r) {
@@ -536,6 +539,7 @@ func (a *App) emailRoutes(m *http.ServeMux) {
 			s.Host, s.Port, s.Security, s.Username, s.Password, s.From, s.FromName, s.SiteURL)) {
 			return
 		}
+		a.loadSiteURL()
 		passwordSet := s.Password != ""
 		s.Password = ""
 		if admin, e := a.currentUser(r); e == nil {
@@ -682,9 +686,16 @@ func (a *App) emailRoutes(m *http.ServeMux) {
 			fail(w, 429, "too_many_attempts_wait")
 			return
 		}
-		link := a.requestOrigin(r) + "/s/" + s.ID
+		// Emails to outside addresses carry a link only to an address the
+		// administrator chose.
+		origin := a.linkOrigin()
+		if origin == "" {
+			fail(w, 409, "site_url_missing")
+			return
+		}
+		link := origin + "/s/" + s.ID
 		if s.Slug != "" {
-			link = a.requestOrigin(r) + "/s/" + s.Slug
+			link = origin + "/s/" + s.Slug
 		}
 		for _, to := range recipients {
 			if !a.queueMail(shareMail(to, b.Language, u.Username, link, message, s)) {

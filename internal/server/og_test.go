@@ -27,6 +27,7 @@ func TestShareLinksGetChatCards(t *testing.T) {
 	if e := exec(a, "UPDATE settings SET site_url='https://files.example' WHERE id=1"); e != nil {
 		t.Fatal(e)
 	}
+	a.loadSiteURL()
 	open := createShare(t, a, token, "", 4)
 	if w := chunk(a, token, open.Files[0].ID, 0, "data"); w.Code != 200 {
 		t.Fatal(w.Code, w.Body)

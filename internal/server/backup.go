@@ -32,7 +32,7 @@ const (
 
 // magisend-backup-<installation>-<time>[-incomplete].tar; archives from
 // before 1.0.6 have no installation part.
-var backupName = regexp.MustCompile(`^magisend-backup-(?:([0-9a-f]{8})-)?\d{8}-\d{6}(-incomplete)?\.tar$`)
+var backupName = regexp.MustCompile(`^magisend-backup-(?:([0-9a-f]{8})-)?(\d{8}-\d{6})(-incomplete)?\.tar$`)
 
 const backupStall = 10 * time.Minute
 
@@ -98,6 +98,8 @@ type BackupFile struct {
 	Complete bool   `json:"complete"`
 	// Made by this installation (or before archives carried its ID).
 	own bool
+	// When it was made, from its name.
+	stamp string
 }
 
 func (a *App) backupSettings() (BackupSettings, int64, string, error) {
@@ -137,9 +139,9 @@ func listBackups(dir, install string) []BackupFile {
 		if m == nil || m[1] != "" && m[1] != install {
 			continue
 		}
-		list = append(list, BackupFile{Name: entry.Name(), Size: info.Size(), Created: info.ModTime().Unix(), Complete: m[2] == "", own: m[1] == install})
+		list = append(list, BackupFile{Name: entry.Name(), Size: info.Size(), Created: info.ModTime().Unix(), Complete: m[3] == "", own: m[1] == install, stamp: m[2]})
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Created > list[j].Created })
+	sort.Slice(list, func(i, j int) bool { return list[i].stamp > list[j].stamp })
 	return list
 }
 

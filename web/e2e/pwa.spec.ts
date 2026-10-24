@@ -35,6 +35,10 @@ test('installable app with offline page and share target', async ({ page, contex
   });
   expect(redirected).toBe('/?shared=1');
   await page.goto(redirected);
+  // Shared files wait for a confirmation before they are added.
+  await expect(page.locator('.shared-in')).toContainText('from-phone.txt');
+  await page.getByRole('button', { name: 'Add files' }).click();
+  await expect(page.locator('.shared-in')).toHaveCount(0);
   await expect(page.getByText('from-phone.txt', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/send$/);
 

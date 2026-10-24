@@ -91,7 +91,7 @@ Run on your **Proxmox host** as root:
 bash <(curl -fsSL https://raw.githubusercontent.com/Mati-l33t/magisend/main/proxmox/install.sh)
 ```
 
-It creates an unprivileged Debian LXC (default 1 core, 512 MB RAM, 4 GB disk, DHCP) and installs MagiSend in it. Uploaded files are stored on that disk unless you add a NAS share; the disk can be grown later in Proxmox, after which you raise the storage budget under **Administration → Limits**. The container's Notes panel links to the project, and signing in to the container shows its address and how to update. Choose **Advanced** to set the container ID, hostname, disk, CPU, RAM, bridge, static IP, VLAN, root password, port and a public address for a reverse proxy.
+It creates an unprivileged Debian LXC (default 1 core, 512 MB RAM, 4 GB disk, DHCP) and installs MagiSend in it. Uploaded files are stored on that disk unless you add a NAS share; the disk can be grown later in Proxmox, after which you raise the storage budget under **Administration → Limits**. The container's Notes panel links to the project, and signing in to the container shows its address and how to update. In the default install the container's console signs in as root without a password; choose **Advanced** to set a root password instead. Choose **Advanced** to set the container ID, hostname, disk, CPU, RAM, bridge, static IP, VLAN, root password, port and a public address for a reverse proxy.
 
 ### Debian, Ubuntu and other Linux systems
 
@@ -139,7 +139,7 @@ With plain Nginx or another proxy, allow request bodies of at least 8 MB; see [d
 
 MagiSend checks GitHub for new releases. Administrators see a notice with the new version and a link to the changelog, and can update under **Administration → Updates**.
 
-Every release is signed with a key that is kept off GitHub, and the installed MagiSend checks that signature before it updates, so a taken-over GitHub account or download cannot push an update. Only newer versions are installed. Before switching, MagiSend copies its database and snapshots the files in its data folder; if anything goes wrong or the new version does not start, the previous version, database and those files are restored and started again. Files on added storage locations (a NAS) are not part of that snapshot. To check a release by hand, see [docs/operations.md](docs/operations.md#release-signatures).
+Every release is signed with a key that is kept off GitHub, and the installed MagiSend checks that signature before it updates, so a taken-over GitHub account or download cannot push an update to a native installation. Only newer versions are installed. Before switching, MagiSend saves its database and snapshots the files in its data folder (with hard links, when they share a disk with `/var/lib`); if anything goes wrong, the update is stopped, or the new version does not start, the previous version and database are put back and started again. Files on added storage locations (a NAS) are not part of that snapshot; stored files are never changed in place. Docker images are only built from releases after they were signed and published; the images themselves are not signed. To check a release by hand, see [docs/operations.md](docs/operations.md#release-signatures).
 
 - **Proxmox LXC / Linux:** use the button, or run `/opt/magisend/update.sh` as root.
 - **Docker:** `docker compose pull && docker compose up -d`.

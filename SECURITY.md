@@ -18,5 +18,5 @@ Please do not open a public issue for security problems. Use GitHub's **private 
 - Serve MagiSend over **HTTPS** whenever it is reachable from outside a trusted network; plain HTTP exposes passwords and files.
 - The first administrator account can only be created with the one-time setup code the installer prints; keep it to yourself until setup is done.
 - Use the installers or the Docker image: both run MagiSend as an unprivileged user (a hardened systemd service or a non-root container).
-- Updates are only installed when the release's signature, made with a key kept off GitHub, and its checksums are valid, and only to newer versions. The updater runs as root but never writes into the data folder the app can change. See `docs/operations.md`.
+- Updates are only installed when the release's signature, made with a key kept off GitHub, and its checksums are valid, and only to newer versions. The updater runs as root and keeps its working files in a folder only root can write; it writes into the data folder only to put the saved database back during a rollback, after MagiSend was stopped, and only to those exact files. Docker images are built only from signed, published releases but are not signed themselves. See `docs/operations.md`.
 - Back up the data directory regularly (see `docs/operations.md`).

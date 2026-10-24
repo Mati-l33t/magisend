@@ -55,6 +55,14 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (request.method === 'POST' && url.pathname === '/share-target') {
+    // The system share sheet sends no site; a post from another website is
+    // turned away where the browser says so (and the page always asks before
+    // adding shared files).
+    const site = request.headers.get('Sec-Fetch-Site');
+    if (site && site !== 'none' && site !== 'same-origin') {
+      event.respondWith(Response.redirect('/', 303));
+      return;
+    }
     event.respondWith(receiveShare(request));
     return;
   }

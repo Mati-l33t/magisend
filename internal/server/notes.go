@@ -55,6 +55,15 @@ func cleanTitle(s string, limit int) string {
 			s = string(cut) + "…"
 		}
 	}
+	// File names are limited in bytes too: leave room for "…" and ".md".
+	const maxBytes = 230
+	if len(s) > maxBytes {
+		cut := s[:maxBytes]
+		for !utf8.ValidString(cut) {
+			cut = cut[:len(cut)-1]
+		}
+		s = strings.TrimSpace(cut) + "…"
+	}
 	s = strings.Trim(s, ". ")
 	return s
 }
@@ -265,15 +274,17 @@ func (a *App) noteRoutes(m *http.ServeMux) {
 			textConflict(w)
 			return
 		}
-		if b.Text != string(current) {
-			if version, ok = a.storeText(w, f.File, u.ID, version, []byte(b.Text)); !ok {
-				return
-			}
-		}
+		// The name is checked before anything is saved, so a refused title
+		// never leaves the text saved under a version the editor does not know.
 		name, auto := noteName(b.Title, b.Text, b.Language)
 		if !validFilename(name) {
 			fail(w, 400, "Ogiltiga indata")
 			return
+		}
+		if b.Text != string(current) {
+			if version, ok = a.storeText(w, f.File, u.ID, version, []byte(b.Text)); !ok {
+				return
+			}
 		}
 		if internal(w, exec(a, "UPDATE files SET name=? WHERE id=?", name, f.ID)) ||
 			internal(w, exec(a, "INSERT INTO note_titles(file_id,auto) VALUES(?,?) ON CONFLICT(file_id) DO UPDATE SET auto=excluded.auto", f.ID, auto)) {

@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,6 +39,10 @@ type App struct {
 	// When a client was last counted downloading a file, so its later ranges
 	// continue that download instead of counting again.
 	resumes map[string]time.Time
+	// Thumbnails decoded in a request because the queue was full.
+	thumbInline chan struct{}
+	// The site URL for links (linkOrigin).
+	siteURL atomic.Value
 	// Library containers a ZIP is being unpacked into.
 	extracting map[string]bool
 	// Bytes reserved by token uploads in progress, in total and per owner.
@@ -146,6 +151,7 @@ func NewApp(root, origin string) (*App, error) {
 	a.downloadClients.count = map[string]int{}
 	a.tokenUploads.user = map[string]int64{}
 	a.extracting = map[string]bool{}
+	a.thumbInline = make(chan struct{}, 2)
 	a.mutationClients.count = map[string]int{}
 	a.uploadClients.count = map[string]int{}
 	go a.thumbnailWorker()
@@ -171,6 +177,7 @@ func NewApp(root, origin string) (*App, error) {
 	if e = a.writeStorageIndexes(time.Now()); e != nil {
 		log.Print("storage index: ", e)
 	}
+	a.loadSiteURL()
 	if e = a.prepareSetupCode(); e != nil {
 		db.Close()
 		return nil, e

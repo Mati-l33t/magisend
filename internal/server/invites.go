@@ -70,13 +70,24 @@ func validSiteURL(raw string) (string, bool) {
 }
 
 // linkOrigin is the trusted address for links in system emails.
+// linkOrigin is the address the administrator chose for links: the public
+// origin, else the site URL from the email settings. It is kept in memory
+// (loadSiteURL), so it can be used inside a transaction on the single
+// database connection.
 func (a *App) linkOrigin() string {
 	if a.publicOrigin != "" {
 		return a.publicOrigin
 	}
+	site, _ := a.siteURL.Load().(string)
+	return site
+}
+
+// loadSiteURL reads the site URL into memory; called at startup and when it
+// is saved.
+func (a *App) loadSiteURL() {
 	var site string
 	_ = a.db.QueryRow("SELECT site_url FROM settings WHERE id=1").Scan(&site)
-	return site
+	a.siteURL.Store(site)
 }
 
 func (a *App) passwordResetAvailable() bool { return a.emailEnabled() && a.linkOrigin() != "" }
