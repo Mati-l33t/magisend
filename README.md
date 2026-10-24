@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/library.png" width="100%" alt="The file library" />
+  <img src="docs/screenshots/library-aurora.png" width="100%" alt="The file library" />
 </p>
 
 ## Features
@@ -61,8 +61,8 @@
   <img src="docs/screenshots/looks.png" width="100%" alt="Four looks: Aurora, Classic, Refined and Studio, in dark and light" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/send.png" width="49%" alt="Sending files" />
-  <img src="docs/screenshots/admin.png" width="49%" alt="Administration" />
+  <img src="docs/screenshots/send-light.png" width="49%" alt="Sending files" />
+  <img src="docs/screenshots/admin-refined.png" width="49%" alt="Administration" />
 </p>
 <p align="center">
   <img src="docs/screenshots/phones.png" width="100%" alt="A shared link, notes and the library on phones" />
@@ -72,11 +72,11 @@
 <summary><strong>More screenshots</strong></summary>
 <br />
 <p align="center">
-  <img src="docs/screenshots/notes.png" width="100%" alt="Notes with checklists" />
+  <img src="docs/screenshots/notes-dark.png" width="100%" alt="Notes with checklists" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/ready.png" width="49%" alt="A link ready to share, with QR code" />
-  <img src="docs/screenshots/viewer.png" width="49%" alt="Gallery viewer" />
+  <img src="docs/screenshots/ready-studio.png" width="49%" alt="A link ready to share, with QR code" />
+  <img src="docs/screenshots/viewer-dark.png" width="49%" alt="Gallery viewer" />
 </p>
 </details>
 

@@ -2,7 +2,7 @@
 // captures it in every look and frames the captures.
 //
 // From the repository root, after `cd web && npm run build`:
-//   go build -tags embedui -o magisend . &&
+//   go build -tags embedui -ldflags "-X main.version=v1.2.3" -o magisend . &&
 //     MAGISEND_DATA=$(mktemp -d) MAGISEND_LISTEN=127.0.0.1:18090 ./magisend &
 //   node web/scripts/screenshots.mjs http://127.0.0.1:18090 docs/screenshots
 import { join, resolve } from 'node:path';
@@ -296,18 +296,18 @@ async function frame(file, body) {
   await framer.locator('.canvas').screenshot({ path: join(out, file), omitBackground: true });
 }
 
-await frame('library.png', win('library-aurora-dark', '/library', 1280));
+await frame('library-aurora.png', win('library-aurora-dark', '/library', 1280));
 await frame(
   'looks.png',
   `<h1>Four looks, dark and light</h1><p>Every person picks their own; the administrator sets the default.</p>
   <div class="row">${win('library-aurora-dark', '/library', 680, false, '<b>Aurora</b> dark')}${win('library-classic-dark', '/library', 680, false, '<b>Classic</b> dark')}</div>
   <div class="row">${win('library-refined-light', '/library', 680, true, '<b>Refined</b> light')}${win('library-studio-light', '/library', 680, true, '<b>Studio</b> light')}</div>`,
 );
-await frame('send.png', win('send-aurora-light', '/send', 1100, true));
-await frame('admin.png', win('admin-refined-dark', '/admin', 1100));
-await frame('notes.png', win('notes-aurora-dark', '/library/notes', 1100));
-await frame('ready.png', win('ready-studio-light', '/send', 1100, true));
-await frame('viewer.png', win('viewer-dark', '/s/holiday-2026', 1100));
+await frame('send-light.png', win('send-aurora-light', '/send', 1100, true));
+await frame('admin-refined.png', win('admin-refined-dark', '/admin', 1100));
+await frame('notes-dark.png', win('notes-aurora-dark', '/library/notes', 1100));
+await frame('ready-studio.png', win('ready-studio-light', '/send', 1100, true));
+await frame('viewer-dark.png', win('viewer-dark', '/s/holiday-2026', 1100));
 await frame(
   'phones.png',
   `<div class="row">${await phone('phone-share')}${await phone('phone-notes')}${await phone('phone-library')}</div>`,
