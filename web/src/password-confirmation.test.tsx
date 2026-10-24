@@ -50,6 +50,7 @@ for (const locale of ['en', 'sv'])
               repeat: 'Repeat password',
               create: setup ? 'Create administrator' : 'Create account',
               login: 'Log in',
+              code: 'Setup code',
               mismatch: 'Passwords do not match.',
             }
           : {
@@ -58,6 +59,7 @@ for (const locale of ['en', 'sv'])
               repeat: 'Upprepa lösenord',
               create: setup ? 'Skapa administratör' : 'Skapa konto',
               login: 'Logga in',
+              code: 'Installationskod',
               mismatch: 'Lösenorden stämmer inte överens.',
             };
       let created = false;
@@ -78,6 +80,10 @@ for (const locale of ['en', 'sv'])
         expect(screen.queryByLabelText(labels.repeat, { exact: true })).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: labels.create }));
       }
+      if (setup)
+        fireEvent.change(screen.getByLabelText(labels.code, { exact: true }), {
+          target: { value: 'ABCD-EFGH-JKLM' },
+        });
       fireEvent.change(screen.getByLabelText(labels.name, { exact: true }), {
         target: { value: 'new.owner' },
       });
@@ -102,7 +108,11 @@ for (const locale of ['en', 'sv'])
           endpoint,
           expect.objectContaining({
             method: 'POST',
-            body: JSON.stringify({ username: 'new.owner', password }),
+            body: JSON.stringify(
+              setup
+                ? { username: 'new.owner', password, setup_code: 'ABCD-EFGH-JKLM' }
+                : { username: 'new.owner', password },
+            ),
           }),
         ),
       );

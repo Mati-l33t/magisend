@@ -183,7 +183,7 @@ it('publication and deletion survive refresh and local cleanup errors', async ()
   await screen.findByText(/Delningen raderades, men kontot/);
   expect(screen.queryByRole('button', { name: 'Radera draft' })).not.toBeInTheDocument();
 });
-it('tokenless setup is once-only and failed login recovers without repeating setup', async () => {
+it('setup is once-only and failed login recovers without repeating setup', async () => {
   let created = false;
   let loginAttempts = 0;
   const fetcher = vi.fn(async (url: string) => {
@@ -204,7 +204,9 @@ it('tokenless setup is once-only and failed login recovers without repeating set
   vi.stubGlobal('fetch', fetcher);
   render(<App />);
   await screen.findByRole('button', { name: 'Skapa administratör' });
-  expect(screen.queryByLabelText('Installationsnyckel')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Installationskod'), {
+    target: { value: 'ABCD-EFGH-JKLM' },
+  });
   fireEvent.change(screen.getByLabelText('Användarnamn'), { target: { value: 'mati' } });
   fireEvent.change(screen.getByLabelText('Lösenord'), { target: { value: 'some-long-password' } });
   fireEvent.change(screen.getByLabelText('Upprepa lösenord'), {
@@ -216,7 +218,11 @@ it('tokenless setup is once-only and failed login recovers without repeating set
   expect(fetcher).toHaveBeenCalledWith(
     '/api/setup',
     expect.objectContaining({
-      body: JSON.stringify({ username: 'mati', password: 'some-long-password' }),
+      body: JSON.stringify({
+        username: 'mati',
+        password: 'some-long-password',
+        setup_code: 'ABCD-EFGH-JKLM',
+      }),
     }),
   );
   expect(screen.getByLabelText('Lösenord')).toHaveValue('');

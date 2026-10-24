@@ -1,13 +1,19 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 import JSZip from 'jszip';
 
 const headers = { 'X-MagiSend': '1' };
 
 test('a new version replaces a file and keeps its link and history', async ({ page }) => {
   const credentials = { username: 'versions', password: 'disposable version passphrase' };
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials, headers })).status()).toBe(
     200,
   );

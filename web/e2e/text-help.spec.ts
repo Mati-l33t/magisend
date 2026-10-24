@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 // Real HTTP/backend + browser on a disposable server: a Markdown file opens as
 // a formatted note, and the help explains the page that is on screen.
 test.use({ locale: 'en-GB' });
@@ -6,9 +7,14 @@ test.use({ locale: 'en-GB' });
 test('Markdown preview, ten-at-a-time lists and help that follows the page', async ({ page }) => {
   const credentials = { username: 'keeper', password: 'disposable helper passphrase' };
   const headers = { 'X-MagiSend': '1' };
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials, headers })).status()).toBe(
     200,
   );

@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { setupCode } from './setup';
 import { mkdir } from 'node:fs/promises';
 import { choose } from './choose';
 // Real HTTP/backend + browser. Each test owns its accounts/folder/files and can
@@ -73,7 +74,12 @@ test.beforeAll(async ({ playwright, baseURL }) => {
   if (baseURL !== 'http://127.0.0.1:18087') throw Error('Disposable QA origin required');
   owner = await playwright.request.newContext({ baseURL, extraHTTPHeaders: { 'X-MagiSend': '1' } });
   if ((await json(owner, '/api/status')).setup_required)
-    await json(owner, '/api/setup', { username: ownerName, password: ownerPassword }, 'POST');
+    await json(
+      owner,
+      '/api/setup',
+      { username: ownerName, password: ownerPassword, setup_code: setupCode },
+      'POST',
+    );
   await json(owner, '/api/login', { username: ownerName, password: ownerPassword }, 'POST');
   const users = await json(owner, '/api/admin/users');
   const admin = users.find((u: { username: string }) => u.username === ownerName);

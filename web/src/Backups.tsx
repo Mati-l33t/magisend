@@ -21,6 +21,8 @@ interface BackupState {
   folder: string;
   last: number;
   error: string;
+  // Set when the last backup finished but could not copy everything.
+  warning?: string;
   state: { running: boolean; done: number; total: number };
   backups: BackupFile[];
 }
@@ -180,6 +182,13 @@ export function BackupPanel() {
       ) : state.error ? (
         <p role="alert" className="error backup-status">
           {t('backup.failed', { date: formatDate(state.last * 1000, true), reason: state.error })}
+        </p>
+      ) : state.warning ? (
+        <p role="alert" className="notice backup-status">
+          {t('backup.incomplete', {
+            date: formatDate(state.last * 1000, true),
+            missing: state.warning,
+          })}
         </p>
       ) : state.last ? (
         <p className="muted backup-status">

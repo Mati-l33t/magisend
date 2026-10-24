@@ -16,7 +16,7 @@ func TestAPIErrorIsEnglishWithStableTranslationCode(t *testing.T) {
 	if body["error_code"] != "login_required" || body["error"] != "Log in to continue" {
 		t.Fatalf("untranslated/uncoded API error: %v", body)
 	}
-	w = call(a, "POST", "/api/setup", `{"username":"A","password":"short"}`, "")
+	w = call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"A","password":"short"}`, "")
 	json.Unmarshal(w.Body.Bytes(), &body)
 	if w.Code != 400 || body["error_code"] != "invalid_credentials" {
 		t.Fatal(w.Code, body)

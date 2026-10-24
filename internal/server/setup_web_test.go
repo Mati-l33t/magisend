@@ -10,7 +10,7 @@ import (
 
 func TestWebSetupWithoutConsoleToken(t *testing.T) {
 	a := testApp(t)
-	w := call(a, "POST", "/api/setup", `{"username":"firstadmin","password":"correct horse battery staple"}`, "")
+	w := call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"firstadmin","password":"correct horse battery staple"}`, "")
 	if w.Code != 201 {
 		t.Fatalf("web-only setup must create first admin, got %d: %s", w.Code, w.Body)
 	}
@@ -18,7 +18,7 @@ func TestWebSetupWithoutConsoleToken(t *testing.T) {
 	if e := json.Unmarshal(w.Body.Bytes(), &user); e != nil || user.Role != "admin" {
 		t.Fatalf("not an admin: %+v %v", user, e)
 	}
-	if w = call(a, "POST", "/api/setup", `{"username":"secondadmin","password":"correct horse battery staple"}`, ""); w.Code != 409 {
+	if w = call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"secondadmin","password":"correct horse battery staple"}`, ""); w.Code != 409 {
 		t.Fatalf("setup must close: %d", w.Code)
 	}
 	a.db.Exec("UPDATE settings SET registration_open=1")
@@ -28,7 +28,7 @@ func TestWebSetupWithoutConsoleToken(t *testing.T) {
 	if w = call(a, "POST", "/api/register", `{"username":"imposter","password":"correct horse battery staple","role":"admin"}`, ""); w.Code != 400 {
 		t.Fatal(w.Code, w.Body)
 	}
-	if w = call(a, "POST", "/api/setup", `{"username":"thirdadmin","password":"correct horse battery staple"}`, ""); w.Code != 409 {
+	if w = call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"thirdadmin","password":"correct horse battery staple"}`, ""); w.Code != 409 {
 		t.Fatalf("opening registration reopened setup: %d", w.Code)
 	}
 }
@@ -41,7 +41,7 @@ func TestTokenlessSetupRaceStillCreatesExactlyOneAdmin(t *testing.T) {
 		wg.Add(1)
 		go func(name string) {
 			defer wg.Done()
-			b, _ := json.Marshal(map[string]string{"username": name, "password": "correct horse battery staple"})
+			b, _ := json.Marshal(map[string]string{"setup_code": "TEST-SETUP-CODE", "username": name, "password": "correct horse battery staple"})
 			codes <- call(a, "POST", "/api/setup", string(b), "").Code
 		}(name)
 	}

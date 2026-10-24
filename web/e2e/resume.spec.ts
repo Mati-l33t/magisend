@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { setupCode } from './setup';
 import { mkdtempSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,9 +46,14 @@ test('library uploads retry a dropped piece, pause, and resume after a reload', 
   page,
 }) => {
   const credentials = { username: 'resumer', password: 'disposable resume passphrase' };
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials, headers })).status()).toBe(
     200,
   );

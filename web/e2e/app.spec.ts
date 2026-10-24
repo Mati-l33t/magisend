@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 import { readFile, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 const digest = (b: Buffer) => createHash('sha256').update(b).digest('hex');
@@ -13,7 +14,7 @@ test('first admin, dark/light mobile/desktop, real multi-file pause/resume, prot
   await expect(page.getByRole('heading', { name: 'Din första MagiSend.' })).toBeVisible();
   expect(await page.locator('html').getAttribute('data-theme')).toBe('dark');
   await page.screenshot({ path: 'test-results/screens/setup-desktop-dark.png', fullPage: true });
-  await expect(page.getByLabel('Installationsnyckel')).toHaveCount(0);
+  await page.getByLabel('Installationskod', { exact: true }).fill(setupCode);
   await expect(page.getByText(/cat \/etc\/magisend/)).toHaveCount(0);
   await page.getByLabel('Användarnamn', { exact: true }).fill('qaadmin');
   await page.getByLabel('Lösenord', { exact: true }).fill('magisend-e2e-only-password');

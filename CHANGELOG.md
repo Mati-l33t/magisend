@@ -2,6 +2,16 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## 1.0.1
+
+Security hardening.
+
+- **Signed releases:** every release is signed with a key kept off GitHub, and the updater only installs a release whose signature the installed MagiSend accepts. Updates only ever go to newer versions.
+- **Safer updater:** it keeps its status and snapshot in a folder only root can write, instead of the app's data folder. Any failure after MagiSend was stopped now restores the previous version and starts it again.
+- **Setup code:** the first administrator account needs a one-time code that the installer prints and the server logs, so nobody else on the network can claim a fresh installation.
+- **Backups say when they are incomplete:** files on an unavailable storage location or files that cannot be read are listed in the admin page and in `MISSING.txt` in the backup, and files deleted while a backup runs are kept until it is done.
+- **Releases wait for the tests**, and the build steps are pinned to exact versions.
+
 ## 1.0.0
 
 First public release.

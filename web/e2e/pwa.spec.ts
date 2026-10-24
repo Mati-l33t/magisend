@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 
 // Installable app: manifest, service worker, offline page and the share
 // target that receives files from the phone's share sheet. Runs on its own
@@ -7,7 +8,11 @@ test.use({ locale: 'en-GB', extraHTTPHeaders: { 'X-MagiSend': '1' }, serviceWork
 
 test('installable app with offline page and share target', async ({ page, context }) => {
   const credentials = { username: 'pwaowner', password: 'disposable pwa passphrase' };
-  expect((await page.request.post('/api/setup', { data: credentials })).status()).toBe(201);
+  expect(
+    (
+      await page.request.post('/api/setup', { data: { ...credentials, setup_code: setupCode } })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials })).status()).toBe(200);
 
   await page.goto('/');

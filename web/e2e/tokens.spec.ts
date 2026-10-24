@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 // Real HTTP/backend + browser on a disposable server: a token created in the
 // interface uploads like ShareX does, and the returned link works.
 test.use({ locale: 'en-GB', actionTimeout: 10000 });
@@ -6,9 +7,14 @@ test.use({ locale: 'en-GB', actionTimeout: 10000 });
 test('API token uploads and returns a working share link', async ({ page, browser, baseURL }) => {
   const credentials = { username: 'tokenowner', password: 'disposable token passphrase' };
   const headers = { 'X-MagiSend': '1' };
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials, headers })).status()).toBe(
     200,
   );

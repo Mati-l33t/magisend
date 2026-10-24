@@ -116,5 +116,12 @@ for ip in $(hostname -I 2> /dev/null); do
   echo "  Open:            http://$ip:$PORT"
 done
 echo
-echo "  Create the administrator account in the browser now."
+if [ -r "$DATA/setup-code" ]; then
+  echo "  Setup code:      $(cat "$DATA/setup-code")"
+  echo
+  echo "  Open the address above and create the administrator account with this code."
+  echo "  It is also in $DATA/setup-code until the account exists."
+else
+  echo "  Create the administrator account in the browser now."
+fi
 echo "  Settings: $ENV_DIR/environment   Logs: journalctl -u magisend"

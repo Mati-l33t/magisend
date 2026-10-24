@@ -14,7 +14,7 @@ func TestOnlyFirstSetupCanCreateAdmin(t *testing.T) {
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()
-			b, _ := json.Marshal(map[string]string{"username": n, "password": "correct horse battery staple"})
+			b, _ := json.Marshal(map[string]string{"setup_code": "TEST-SETUP-CODE", "username": n, "password": "correct horse battery staple"})
 			codes <- call(a, "POST", "/api/setup", string(b), "").Code
 		}(name)
 	}

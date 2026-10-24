@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 
 const headers = { 'X-MagiSend': '1' };
 // A 1×1 PNG.
@@ -9,9 +10,14 @@ const png = Buffer.from(
 
 test('the viewer moves between files and plays a slideshow of pictures', async ({ page }) => {
   const credentials = { username: 'gallery', password: 'disposable gallery passphrase' };
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials, headers })).status()).toBe(
     200,
   );

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 // Real HTTP/backend + browser on a disposable server: the administration page
 // jumps between sections, finds a setting by name and offers a way back up.
 test.use({ locale: 'en-GB' });
@@ -6,9 +7,14 @@ test.use({ locale: 'en-GB' });
 test('admin sections, settings search and back to top', async ({ page }) => {
   const credentials = { username: 'keeper', password: 'disposable layout passphrase' };
   const headers = { 'X-MagiSend': '1' };
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials, headers })).status()).toBe(
     200,
   );

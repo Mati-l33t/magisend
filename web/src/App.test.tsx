@@ -25,13 +25,13 @@ describe('authentication and theme', () => {
     expect(localStorage.getItem('magisend-theme')).toBe('light');
     expect(document.documentElement.dataset.theme).toBe('light');
   });
-  it('first visit presents tokenless one-time admin creation, not ordinary registration', async () => {
+  it('first visit presents one-time admin creation with the setup code, not ordinary registration', async () => {
     mockAnonymous(true);
     render(<App />);
     expect(await screen.findByRole('heading', { name: 'Din första MagiSend.' })).toBeVisible();
-    expect(screen.queryByLabelText('Installationsnyckel')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Installationskod')).toBeRequired();
     expect(screen.getByRole('button', { name: 'Skapa administratör' })).toBeVisible();
-    expect(screen.getByText(/första besökaren blir administratör/)).toBeVisible();
+    expect(screen.getByText(/Bara den som har installationskoden/)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Skapa konto' })).not.toBeInTheDocument();
   });
   it('submits real login API and displays backend errors', async () => {

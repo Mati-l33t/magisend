@@ -5,6 +5,7 @@
     "Användarnamn: 3–40 gemener/siffror, punkt, understreck eller bindestreck. Lösenord: 12–72 UTF-8-byte"
   ],
   "setup_complete": ["Setup is already complete", "Installationen är redan slutförd"],
+  "setup_code_invalid": ["The setup code is not correct", "Installationskoden stämmer inte"],
   "database_unavailable": ["The database is unavailable", "Databasen är inte tillgänglig"],
   "not_found": ["Not found", "Hittades inte"],
   "security_header_required": ["Missing security header", "Saknad säkerhetsheader"],

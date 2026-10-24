@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 import { createServer, type Server } from 'node:net';
 // Real HTTP/backend + browser on a disposable server, with a local SMTP sink
 // that captures the emails MagiSend sends.
@@ -47,7 +48,11 @@ test('invitation and password reset by email', async ({ page, browser, baseURL }
   const sink = await smtpSink();
   const headers = { 'X-MagiSend': '1' };
   const admin = { username: 'mailadmin', password: 'disposable mail passphrase' };
-  expect((await page.request.post('/api/setup', { data: admin, headers })).status()).toBe(201);
+  expect(
+    (
+      await page.request.post('/api/setup', { data: { ...admin, setup_code: setupCode }, headers })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: admin, headers })).status()).toBe(200);
   const settings = {
     host: '127.0.0.1',

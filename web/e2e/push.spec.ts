@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 import { choose } from './choose';
 
 const headers = { 'X-MagiSend': '1' };
@@ -7,9 +8,14 @@ test('push channels are added, listed and removed; admins choose local addresses
   page,
 }) => {
   const credentials = { username: 'pusher', password: 'disposable push passphrase' };
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials, headers })).status()).toBe(
     200,
   );

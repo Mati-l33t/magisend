@@ -32,6 +32,7 @@ const chunkMax int64 = 4 << 20
 type App struct {
 	db                            *sql.DB
 	root, publicOrigin            string
+	setupCode                     string
 	mu                            sync.Mutex
 	attempts                      map[string]attempt
 	mutations, uploads, downloads chan struct{}
@@ -143,6 +144,10 @@ func NewApp(root, origin string) (*App, error) {
 		return nil, e
 	}
 	if e = a.collectOrphanBlobs(); e != nil {
+		db.Close()
+		return nil, e
+	}
+	if e = a.prepareSetupCode(); e != nil {
 		db.Close()
 		return nil, e
 	}
@@ -340,9 +345,10 @@ func (a *App) setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Email    string `json:"email"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		Email     string `json:"email"`
+		SetupCode string `json:"setup_code"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -360,6 +366,16 @@ func (a *App) setup(w http.ResponseWriter, r *http.Request) {
 	}
 	if !required || a.countUsers() != 0 {
 		fail(w, 409, "Installationen är redan slutförd")
+		return
+	}
+	key := "setup:" + a.clientIP(r)
+	if a.blocked(key, setupFailures) {
+		fail(w, 429, "too_many_attempts_wait")
+		return
+	}
+	if !a.setupCodeMatches(b.SetupCode) {
+		a.failed(key)
+		fail(w, 403, "setup_code_invalid")
 		return
 	}
 	if !validUsername(b.Username) || !validPassword(b.Password) {
@@ -387,6 +403,7 @@ func (a *App) setup(w http.ResponseWriter, r *http.Request) {
 	if internal(w, tx.Commit()) {
 		return
 	}
+	a.setupDone()
 	a.audit(r, u.Username, "account.setup", "")
 	respond(w, 201, u)
 }

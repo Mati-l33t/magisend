@@ -290,7 +290,10 @@ main() {
   echo
   ok "MagiSend is installed in container $CTID"
   echo
+  local code
+  code=$(pct exec "$CTID" -- cat /var/lib/magisend/setup-code 2> /dev/null || true)
   echo -e "  Open ${OR}${BOLD}http://${ip}:${PORT}${CL} and create the administrator account."
+  [ -n "$code" ] && echo -e "  Setup code: ${OR}${BOLD}${code}${CL} (also in /var/lib/magisend/setup-code in the container)"
   [ -n "$PUBLIC_URL" ] && echo -e "  Public address: ${OR}$PUBLIC_URL${CL} (point your reverse proxy to http://${ip}:${PORT})"
   echo -e "  Updates: Administration → Updates, or run ${BOLD}/opt/magisend/update.sh${CL} in the container."
   echo

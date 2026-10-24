@@ -216,6 +216,7 @@ it('setup rejects overlong UTF-8 passwords without API calls and accepts twelve 
   vi.stubGlobal('fetch', fetcher);
   render(<App />);
   await screen.findByRole('button', { name: 'Create administrator' });
+  fireEvent.change(screen.getByLabelText('Setup code'), { target: { value: 'ABCD-EFGH-JKLM' } });
   fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'mati' } });
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'å'.repeat(37) } });
   fireEvent.click(screen.getByRole('button', { name: 'Create administrator' }));
@@ -228,7 +229,11 @@ it('setup rejects overlong UTF-8 passwords without API calls and accepts twelve 
     expect(fetcher).toHaveBeenCalledWith(
       '/api/setup',
       expect.objectContaining({
-        body: JSON.stringify({ username: 'mati', password: 'å'.repeat(6) }),
+        body: JSON.stringify({
+          username: 'mati',
+          password: 'å'.repeat(6),
+          setup_code: 'ABCD-EFGH-JKLM',
+        }),
       }),
     ),
   );

@@ -71,7 +71,7 @@ func (a *App) removeFileBlobs(id string) error {
 		return e
 	}
 	for _, blob := range ids {
-		if e = os.Remove(filepath.Join(dir, blob)); e != nil && !os.IsNotExist(e) {
+		if e = a.discardStored(filepath.Join(dir, blob)); e != nil && !os.IsNotExist(e) {
 			return e
 		}
 	}
@@ -200,7 +200,7 @@ func (a *App) collectOrphanBlobs() error {
 				continue
 			}
 			if validToken(name) && !referenced[loc][name] && !referenced[""][name] && !entry.IsDir() {
-				if e = os.Remove(filepath.Join(dir, name)); e != nil {
+				if e = a.discardStored(filepath.Join(dir, name)); e != nil && !os.IsNotExist(e) {
 					return e
 				}
 			}

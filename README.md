@@ -112,7 +112,7 @@ docker compose up -d
 
 The image `ghcr.io/mati-l33t/magisend` is built for amd64 and arm64, runs as a non-root user and keeps all data in the `magisend_data` volume.
 
-After installing, open `http://<server>:8080` and **create the administrator account right away** — until it exists, anyone who can reach the page could claim it.
+After installing, open `http://<server>:8080` and create the administrator account with the **setup code** the installer printed, so nobody else on the network can claim a fresh installation. The code is also in the server log (`journalctl -u magisend`; Docker: `docker compose logs magisend`) and in the file `setup-code` in the data folder until the account exists. Automated setups can choose it with `MAGISEND_SETUP_CODE`.
 
 ## Reverse proxy and HTTPS (Nginx Proxy Manager)
 
@@ -137,7 +137,9 @@ With plain Nginx or another proxy, allow request bodies of at least 8 MB; see [d
 
 ## Updating
 
-MagiSend checks GitHub for new releases. Administrators see a notice with the new version and a link to the changelog, and can update under **Administration → Updates**. Before switching versions MagiSend backs up its database and snapshots its files; if the new version does not start, the previous version and data are restored automatically.
+MagiSend checks GitHub for new releases. Administrators see a notice with the new version and a link to the changelog, and can update under **Administration → Updates**.
+
+Every release is signed with a key that is kept off GitHub, and the installed MagiSend checks that signature before it updates, so a taken-over GitHub account or download cannot push an update. Only newer versions are installed. Before switching, MagiSend copies its database and snapshots the files in its data folder; if anything goes wrong or the new version does not start, the previous version, database and those files are restored and started again. Files on added storage locations (a NAS) are not part of that snapshot. To check a release by hand, see [docs/operations.md](docs/operations.md#release-signatures).
 
 - **Proxmox LXC / Linux:** use the button, or run `/opt/magisend/update.sh` as root.
 - **Docker:** `docker compose pull && docker compose up -d`.

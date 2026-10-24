@@ -69,8 +69,18 @@ func Main(buildVersion string, ui fs.FS, errorCatalog []byte) {
 			return
 		case "--healthcheck":
 			os.Exit(healthcheck())
+		case "--verify-release":
+			if len(os.Args) != 4 {
+				fmt.Fprintln(os.Stderr, "usage: magisend --verify-release SHA256SUMS SHA256SUMS.sig")
+				os.Exit(2)
+			}
+			if e := verifyRelease(os.Args[2], os.Args[3]); e != nil {
+				fmt.Fprintln(os.Stderr, e)
+				os.Exit(1)
+			}
+			return
 		default:
-			fmt.Fprintln(os.Stderr, "usage: magisend [--version | --healthcheck]")
+			fmt.Fprintln(os.Stderr, "usage: magisend [--version | --healthcheck | --verify-release SHA256SUMS SHA256SUMS.sig]")
 			os.Exit(2)
 		}
 	}

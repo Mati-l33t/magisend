@@ -34,7 +34,7 @@ func TestSetupIsOnceOnlyAndClosesOrdinaryRegistration(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code)
 	}
-	body := `{"username":"mati","password":"correct horse battery staple"}`
+	body := `{"setup_code":"TEST-SETUP-CODE","username":"mati","password":"correct horse battery staple"}`
 	if w = call(a, "POST", "/api/setup", body, ""); w.Code != 201 {
 		t.Fatal(w.Code, w.Body)
 	}

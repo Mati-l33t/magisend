@@ -7,7 +7,7 @@ const response = (data: unknown, status = 200) => ({
   json: async () => data,
 });
 afterEach(() => vi.restoreAllMocks());
-it('browser English provides tokenless first administrator registration', async () => {
+it('browser English creates the first administrator with the setup code', async () => {
   vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['en-US']);
   vi.spyOn(navigator, 'language', 'get').mockReturnValue('en-US');
   let created = false;
@@ -22,6 +22,7 @@ it('browser English provides tokenless first administrator registration', async 
   render(<App />);
   await screen.findByRole('button', { name: 'Create administrator' });
   expect(screen.queryByText(/LXC|setup-token|Installationsnyckel/)).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Setup code'), { target: { value: 'ABCD-EFGH-JKLM' } });
   fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'mati' } });
   fireEvent.change(screen.getByLabelText('Password'), {
     target: { value: 'a-long-test-password' },
@@ -35,7 +36,11 @@ it('browser English provides tokenless first administrator registration', async 
       '/api/setup',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ username: 'mati', password: 'a-long-test-password' }),
+        body: JSON.stringify({
+          username: 'mati',
+          password: 'a-long-test-password',
+          setup_code: 'ABCD-EFGH-JKLM',
+        }),
       }),
     ),
   );

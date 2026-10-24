@@ -17,6 +17,7 @@ func TestMain(m *testing.M) {
 	if e = SetErrorCatalog(contract); e != nil {
 		panic(e)
 	}
+	os.Setenv("MAGISEND_SETUP_CODE", "TEST-SETUP-CODE")
 	if os.Getenv("MAGISEND_WEB") == "" {
 		os.Setenv("MAGISEND_WEB", filepath.Join(root, "web", "dist"))
 	}

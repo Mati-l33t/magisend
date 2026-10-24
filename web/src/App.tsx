@@ -270,6 +270,8 @@ function Login({
   // Set once the password was accepted for an account with two-step login.
   const [needCode, setNeedCode] = useState(false);
   const [code, setCode] = useState('');
+  // The one-time code the installer showed, needed for the first account.
+  const [setupCode, setSetupCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useMessage();
   const [created, setCreated] = useState(false);
@@ -294,7 +296,7 @@ function Login({
     const account = email.trim() ? { ...credentials, email: email.trim() } : credentials;
     try {
       if (setup) {
-        await api('/api/setup', 'POST', account);
+        await api('/api/setup', 'POST', { ...account, setup_code: setupCode.trim() });
         setCreated(true);
         setPassword('');
         setRepeatedPassword('');
@@ -372,6 +374,25 @@ function Login({
                   ? t('auth.registerDescription')
                   : t('auth.loginDescription')}
             </p>
+            {setup && (
+              <>
+                <label>
+                  {t('auth.setupCode')}
+                  <input
+                    className="mono"
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    spellCheck={false}
+                    value={setupCode}
+                    onChange={(e) => setSetupCode(e.target.value)}
+                    required
+                    aria-describedby="setup-code-help"
+                    placeholder="XXXX-XXXX-XXXX"
+                  />
+                </label>
+                <small id="setup-code-help">{t('auth.setupCodeHint')}</small>
+              </>
+            )}
             <label>
               {t('auth.username')}
               <input

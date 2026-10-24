@@ -11,7 +11,7 @@ func TestSetupCompletionSurvivesRestartAndEmptyUserTable(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	w := call(a, "POST", "/api/setup", `{"username":"first","password":"correct horse battery staple"}`, "")
+	w := call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"first","password":"correct horse battery staple"}`, "")
 	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body)
 	}
@@ -31,7 +31,7 @@ func TestSetupCompletionSurvivesRestartAndEmptyUserTable(t *testing.T) {
 	if status["setup_required"] != false {
 		t.Fatalf("setup reopened after restart: %s", w.Body)
 	}
-	if w = call(a, "POST", "/api/setup", `{"username":"replacement","password":"correct horse battery staple"}`, ""); w.Code != 409 {
+	if w = call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"replacement","password":"correct horse battery staple"}`, ""); w.Code != 409 {
 		t.Fatal(w.Code, w.Body)
 	}
 }

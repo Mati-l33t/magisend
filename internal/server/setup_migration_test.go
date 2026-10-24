@@ -29,7 +29,7 @@ func TestLegacyDatabaseMigratesToClosedSetup(t *testing.T) {
 	if e = a.db.QueryRow("SELECT id,role FROM users WHERE username='existing'").Scan(&id, &role); e != nil || id != u.ID || role != "admin" {
 		t.Fatal(id, role, e)
 	}
-	if w := call(a, "POST", "/api/setup", `{"username":"imposter","password":"correct horse battery staple"}`, ""); w.Code != 409 {
+	if w := call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"imposter","password":"correct horse battery staple"}`, ""); w.Code != 409 {
 		t.Fatal(w.Code, w.Body)
 	}
 }
@@ -39,7 +39,7 @@ func TestSetupTransactionFailureDoesNotLeaveAnAccountOrCloseSetup(t *testing.T) 
 	if _, e := a.db.Exec(`CREATE TRIGGER refuse_setup BEFORE UPDATE OF completed ON installation BEGIN SELECT RAISE(ABORT,'test failure'); END`); e != nil {
 		t.Fatal(e)
 	}
-	body := `{"username":"first","password":"correct horse battery staple"}`
+	body := `{"setup_code":"TEST-SETUP-CODE","username":"first","password":"correct horse battery staple"}`
 	w := call(a, "POST", "/api/setup", body, "")
 	if w.Code != 503 {
 		t.Fatal(w.Code, w.Body)

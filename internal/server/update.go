@@ -139,8 +139,15 @@ type updateStatus struct {
 	Time    string `json:"time,omitempty"`
 }
 
+// The updater runs as root and keeps its status next to the data folder, in
+// a folder only root can write (default /var/lib/magisend-update), so nothing
+// the app writes can steer what root writes. Updaters before 1.0.1 left it in
+// the data folder.
 func (a *App) updateStatus() *updateStatus {
-	data, e := os.ReadFile(filepath.Join(a.root, updateStatusFile))
+	data, e := os.ReadFile(filepath.Join(filepath.Dir(a.root), "magisend-update", updateStatusFile))
+	if e != nil {
+		data, e = os.ReadFile(filepath.Join(a.root, updateStatusFile))
+	}
 	if e != nil || len(data) > 8<<10 {
 		return nil
 	}

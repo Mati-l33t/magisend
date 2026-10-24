@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -39,6 +40,7 @@ func migrateBackup(db *sql.DB) error {
 		{"backup_files", "INTEGER NOT NULL DEFAULT 0"},
 		{"backup_last", "INTEGER NOT NULL DEFAULT 0"},
 		{"backup_error", "TEXT NOT NULL DEFAULT ''"},
+		{"backup_warning", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if e := addColumn(db, "settings", c[0], c[1]); e != nil {
 			return e
@@ -60,6 +62,9 @@ type backupState struct {
 	sync.Mutex
 	running     bool
 	done, total int64
+	// Stored files deleted while a backup runs, removed once it is done, so
+	// the backup's database copy never refers to a file its archive lacks.
+	held []string
 }
 
 type BackupFile struct {
@@ -108,16 +113,17 @@ func (a *App) startBackup(now time.Time) bool {
 	a.backup.running, a.backup.done, a.backup.total = true, 0, 0
 	a.backup.Unlock()
 	go func() {
-		e := a.makeBackup(now)
-		failure := ""
+		missing, e := a.makeBackup(now)
+		failure, warning := "", ""
 		if e != nil {
 			failure = e.Error()
 			log.Print("backup failed")
+		} else if len(missing) > 0 {
+			warning = missingSummary(missing)
+			log.Printf("backup incomplete: %s", warning)
 		}
-		_, _ = a.db.Exec("UPDATE settings SET backup_last=?, backup_error=? WHERE id=1", now.Unix(), failure)
-		a.backup.Lock()
-		a.backup.running = false
-		a.backup.Unlock()
+		_, _ = a.db.Exec("UPDATE settings SET backup_last=?, backup_error=?, backup_warning=? WHERE id=1", now.Unix(), failure, warning)
+		a.finishBackup()
 	}()
 	return true
 }
@@ -146,21 +152,23 @@ To restore:
 4. Start MagiSend again.
 `
 
-func (a *App) makeBackup(now time.Time) error {
+func (a *App) makeBackup(now time.Time) ([]string, error) {
 	s, _, _, e := a.backupSettings()
 	if e != nil {
-		return e
+		return nil, e
 	}
 	dir := a.backupDir(s)
 	if e = os.MkdirAll(dir, 0700); e != nil {
-		return errors.New("the backup folder cannot be created")
+		return nil, errors.New("the backup folder cannot be created")
 	}
 	// SQLite writes a consistent copy while the app keeps working.
 	snapshot := filepath.Join(dir, ".magisend-snapshot-"+randomID()+".sqlite")
 	defer os.Remove(snapshot)
 	if _, e = a.db.Exec("VACUUM INTO ?", snapshot); e != nil {
-		return errors.New("the database could not be copied")
+		return nil, errors.New("the database could not be copied")
 	}
+	// What could not be copied; the backup is then incomplete, and says so.
+	var missing []string
 	type item struct{ name, path string }
 	items := []item{{"magisend.sqlite", snapshot}}
 	if s.Files {
@@ -173,9 +181,14 @@ func (a *App) makeBackup(now time.Time) error {
 		for _, loc := range locations {
 			blobs, e := a.blobDir(loc)
 			if e != nil {
+				missing = append(missing, "storage location "+a.locationLabel(loc)+" (unavailable)")
 				continue
 			}
-			entries, _ := os.ReadDir(blobs)
+			entries, e := os.ReadDir(blobs)
+			if e != nil {
+				missing = append(missing, "storage location "+a.locationLabel(loc)+" (cannot be read)")
+				continue
+			}
 			for _, entry := range entries {
 				if entry.Type().IsRegular() && validToken(entry.Name()) {
 					items = append(items, item{"files/" + loc + "/" + entry.Name(), filepath.Join(blobs, entry.Name())})
@@ -190,7 +203,7 @@ func (a *App) makeBackup(now time.Time) error {
 		}
 	}
 	if space, e := statDisk(dir); e == nil && total+(256<<20) > space.free {
-		return errors.New("there is not enough free space in the backup folder")
+		return nil, errors.New("there is not enough free space in the backup folder")
 	}
 	a.backup.Lock()
 	a.backup.total = total
@@ -200,7 +213,7 @@ func (a *App) makeBackup(now time.Time) error {
 	partial := filepath.Join(dir, "."+name+".partial")
 	out, e := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
 	if e != nil {
-		return errors.New("the backup file cannot be written")
+		return nil, errors.New("the backup file cannot be written")
 	}
 	done := false
 	defer func() {
@@ -211,14 +224,27 @@ func (a *App) makeBackup(now time.Time) error {
 	}()
 	archive := tar.NewWriter(out)
 	if e = archive.WriteHeader(&tar.Header{Name: "RESTORE.txt", Mode: 0600, Size: int64(len(restoreGuide)), ModTime: now, Format: tar.FormatPAX}); e != nil {
-		return e
+		return nil, e
 	}
 	if _, e = io.WriteString(archive, restoreGuide); e != nil {
-		return e
+		return nil, e
 	}
 	for _, it := range items {
-		if e = a.addToBackup(archive, it.name, it.path); e != nil {
-			return errors.New("the backup file cannot be written")
+		copied, e := a.addToBackup(archive, it.name, it.path)
+		if e != nil {
+			return nil, errors.New("the backup file cannot be written")
+		}
+		if !copied {
+			missing = append(missing, it.name)
+		}
+	}
+	if len(missing) > 0 {
+		list := "This backup is incomplete. These could not be copied:\n\n" + strings.Join(missing, "\n") + "\n"
+		if e = archive.WriteHeader(&tar.Header{Name: "MISSING.txt", Mode: 0600, Size: int64(len(list)), ModTime: now, Format: tar.FormatPAX}); e != nil {
+			return nil, e
+		}
+		if _, e = io.WriteString(archive, list); e != nil {
+			return nil, e
 		}
 	}
 	if e = archive.Close(); e == nil {
@@ -228,10 +254,10 @@ func (a *App) makeBackup(now time.Time) error {
 		e = closeErr
 	}
 	if e != nil {
-		return errors.New("the backup file cannot be written")
+		return nil, errors.New("the backup file cannot be written")
 	}
 	if e = os.Rename(partial, filepath.Join(dir, name)); e != nil {
-		return errors.New("the backup file cannot be written")
+		return nil, errors.New("the backup file cannot be written")
 	}
 	done = true
 	// Only the newest are kept.
@@ -240,28 +266,73 @@ func (a *App) makeBackup(now time.Time) error {
 			_ = os.Remove(filepath.Join(dir, old.Name))
 		}
 	}
-	return nil
+	return missing, nil
 }
 
-// addToBackup copies one file; a file deleted meanwhile is left out.
-func (a *App) addToBackup(archive *tar.Writer, name, path string) error {
+// addToBackup copies one file and reports whether it could be read.
+func (a *App) addToBackup(archive *tar.Writer, name, path string) (bool, error) {
 	file, e := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if e != nil {
-		return nil
+		return false, nil
 	}
 	defer file.Close()
 	info, e := file.Stat()
 	if e != nil || !info.Mode().IsRegular() {
-		return nil
+		return false, nil
 	}
 	if e = archive.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: info.Size(), ModTime: info.ModTime(), Format: tar.FormatPAX}); e != nil {
-		return e
+		return false, e
 	}
 	// Exactly the size recorded, even if an upload is still adding to it.
 	if _, e = io.CopyN(archive, &progress{file, a}, info.Size()); e != nil {
-		return e
+		return false, e
 	}
-	return nil
+	return true, nil
+}
+
+// discardStored deletes a stored file, or, while a backup runs, once it is
+// done.
+func (a *App) discardStored(path string) error {
+	a.backup.Lock()
+	if a.backup.running {
+		a.backup.held = append(a.backup.held, path)
+		a.backup.Unlock()
+		return nil
+	}
+	a.backup.Unlock()
+	return os.Remove(path)
+}
+
+func (a *App) finishBackup() {
+	a.backup.Lock()
+	held := a.backup.held
+	a.backup.running, a.backup.held = false, nil
+	a.backup.Unlock()
+	for _, path := range held {
+		_ = os.Remove(path)
+	}
+}
+
+// missingSummary is the warning shown for an incomplete backup.
+func missingSummary(missing []string) string {
+	shown := missing
+	if len(shown) > 5 {
+		shown = shown[:5]
+	}
+	text := strings.Join(shown, ", ")
+	if more := len(missing) - len(shown); more > 0 {
+		text += fmt.Sprintf(" and %d more", more)
+	}
+	return text
+}
+
+func (a *App) locationLabel(loc string) string {
+	a.stores.mu.RLock()
+	defer a.stores.mu.RUnlock()
+	if l := a.stores.locations[loc]; l != nil {
+		return l.Path
+	}
+	return loc
 }
 
 type progress struct {
@@ -311,7 +382,9 @@ func (a *App) backupRoutes(m *http.ServeMux) {
 		a.backup.Lock()
 		state := map[string]any{"running": a.backup.running, "done": a.backup.done, "total": a.backup.total}
 		a.backup.Unlock()
-		respond(w, 200, map[string]any{"settings": s, "folder": a.backupDir(s), "last": last, "error": failure, "state": state, "backups": listBackups(a.backupDir(s))})
+		var warning string
+		_ = a.db.QueryRow("SELECT backup_warning FROM settings WHERE id=1").Scan(&warning)
+		respond(w, 200, map[string]any{"settings": s, "folder": a.backupDir(s), "last": last, "error": failure, "warning": warning, "state": state, "backups": listBackups(a.backupDir(s))})
 	})
 	m.HandleFunc("PUT /api/admin/backups", func(w http.ResponseWriter, r *http.Request) {
 		var b BackupSettings

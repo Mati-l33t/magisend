@@ -59,7 +59,21 @@ location / {
 
 ## Updates
 
-Administrators see new releases under **Administration → Updates**. The update button (or `/opt/magisend/update.sh` as root) looks up the latest release on GitHub, verifies its SHA-256 checksum, stops MagiSend, copies the database and snapshots the stored files with hard links (instant, no extra space), installs the new version and waits for it to report healthy. If it does not, the previous binary, database and files are restored and started again. The result is shown in the web interface.
+Administrators see new releases under **Administration → Updates**. The update button (or `/opt/magisend/update.sh` as root) looks up the latest release on GitHub and only continues if it is newer than the installed version. It downloads the release, its `SHA256SUMS` and `SHA256SUMS.sig`, and has the installed MagiSend check the signature (see below) and the checksum. Then it stops MagiSend, copies the database, snapshots the files in the data folder with hard links (instant, no extra space), installs the new version and waits for it to report healthy. If anything fails after MagiSend was stopped, or the new version does not report healthy, the previous program, database and files are restored and started again. Files on added storage locations are not snapshotted; a new version does not change them while it starts. The result is shown in the web interface.
+
+The updater runs as root. It keeps its status and the snapshot in `/var/lib/magisend-update`, next to the data folder, which only root can write, and never writes into the data folder the app itself can change.
+
+### Release signatures
+
+Each release's `SHA256SUMS` is signed with an Ed25519 key that is not stored on GitHub. The public key is built into MagiSend and published in [release-signing.pub](release-signing.pub). To check a download by hand:
+
+```sh
+base64 -d SHA256SUMS.sig > SHA256SUMS.sig.bin
+openssl pkeyutl -verify -pubin -inkey release-signing.pub -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig.bin
+sha256sum -c --ignore-missing SHA256SUMS
+```
+
+The installer (`install.sh`) checks the checksum; the signature protects updates, since a first installation trusts the installer it downloads.
 
 To skip update checks entirely, set `MAGISEND_UPDATE_CHECK=false`.
 

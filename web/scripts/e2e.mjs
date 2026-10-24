@@ -64,7 +64,12 @@ try {
     const data = mkdtempSync(join(work, 'data-'));
     const server = spawn(binary, [], {
       cwd: root,
-      env: { ...process.env, MAGISEND_DATA: data, MAGISEND_LISTEN: '127.0.0.1:18087' },
+      env: {
+        ...process.env,
+        MAGISEND_DATA: data,
+        MAGISEND_LISTEN: '127.0.0.1:18087',
+        MAGISEND_SETUP_CODE: 'E2E-SETUP-CODE',
+      },
       stdio: ['ignore', 'ignore', 'inherit'],
     });
     try {

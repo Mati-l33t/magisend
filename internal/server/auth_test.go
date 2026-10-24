@@ -9,7 +9,7 @@ import (
 
 func setupAdmin(t *testing.T, a *App) {
 	t.Helper()
-	w := call(a, "POST", "/api/setup", `{"username":"mati","password":"correct horse battery staple"}`, "")
+	w := call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"mati","password":"correct horse battery staple"}`, "")
 	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body)
 	}

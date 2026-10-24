@@ -336,7 +336,7 @@ func (a *App) moveFile(id, target string) error {
 		return e
 	}
 	for _, name := range current {
-		_ = os.Remove(filepath.Join(sourceDir, name))
+		_ = a.discardStored(filepath.Join(sourceDir, name))
 	}
 	return nil
 }

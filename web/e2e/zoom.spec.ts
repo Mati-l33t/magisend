@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { setupCode } from './setup';
 import { crc32, deflateSync } from 'node:zlib';
 // Real browser on a disposable server: previews zoom with the wheel, the
 // buttons, a double click and a two-finger pinch, and open in full screen.
@@ -72,9 +73,14 @@ async function level(page: Page) {
 }
 
 test('zoom and full screen in file previews', async ({ page, browser, baseURL }) => {
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials, headers })).status()).toBe(
     200,
   );

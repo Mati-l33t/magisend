@@ -53,10 +53,10 @@ func TestStarredFilesArePrivateBookmarks(t *testing.T) {
 
 func TestOptionalEmailAtSetupAndRegistration(t *testing.T) {
 	a := testApp(t)
-	if w := call(a, "POST", "/api/setup", `{"username":"mati","password":"correct horse battery staple","email":"bad\r\nBcc: x@evil.com"}`, ""); w.Code != 400 {
+	if w := call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"mati","password":"correct horse battery staple","email":"bad\r\nBcc: x@evil.com"}`, ""); w.Code != 400 {
 		t.Fatal("invalid email accepted at setup", w.Code)
 	}
-	if w := call(a, "POST", "/api/setup", `{"username":"mati","password":"correct horse battery staple","email":"Mati@Example.com"}`, ""); w.Code != 201 {
+	if w := call(a, "POST", "/api/setup", `{"setup_code":"TEST-SETUP-CODE","username":"mati","password":"correct horse battery staple","email":"Mati@Example.com"}`, ""); w.Code != 201 {
 		t.Fatal(w.Code, w.Body)
 	}
 	admin := login(t, a, "mati")

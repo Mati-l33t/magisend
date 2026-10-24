@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { setupCode } from './setup';
 import { createHmac } from 'node:crypto';
 // Real HTTP/backend + browser on a disposable server.
 test.use({ locale: 'en-GB', actionTimeout: 10000 });
@@ -22,9 +23,14 @@ function code(secret: string, step: number) {
 test('two-step login can be turned on and is required at sign-in', async ({ page }) => {
   const credentials = { username: 'secured', password: 'disposable two step passphrase' };
   const headers = { 'X-MagiSend': '1' };
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   await page.goto('/');
   await page.getByLabel('Username', { exact: true }).fill(credentials.username);
   await page.getByLabel('Password', { exact: true }).fill(credentials.password);

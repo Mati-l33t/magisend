@@ -224,7 +224,7 @@ func (a *App) storeText(w http.ResponseWriter, f File, user string, current int,
 	committed = true
 	a.thumbBlocked.Delete(f.ID)
 	if replaced != "" {
-		_ = os.Remove(filepath.Join(store, replaced))
+		_ = a.discardStored(filepath.Join(store, replaced))
 	}
 	return current + 1, true
 }

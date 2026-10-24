@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { setupCode } from './setup';
 import { choose } from './choose';
 
 const headers = { 'X-MagiSend': '1' };
@@ -21,9 +22,14 @@ async function send(page: Page, name: string, keep: (page: Page) => Promise<void
 
 test('files sent on the Send page stay in the chosen library folder', async ({ page }) => {
   const credentials = { username: 'keeper', password: 'disposable keep passphrase' };
-  expect((await page.request.post('/api/setup', { data: credentials, headers })).status()).toBe(
-    201,
-  );
+  expect(
+    (
+      await page.request.post('/api/setup', {
+        data: { ...credentials, setup_code: setupCode },
+        headers,
+      })
+    ).status(),
+  ).toBe(201);
   expect((await page.request.post('/api/login', { data: credentials, headers })).status()).toBe(
     200,
   );
