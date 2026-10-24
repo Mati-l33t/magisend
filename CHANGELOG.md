@@ -2,6 +2,13 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## 1.0.3
+
+Fixes for the files set aside in 1.0.2.
+
+- **A copy is only deleted as a leftover when the other copy is verified:** a stored file the database places in another storage location is now only deleted when that location is reachable and holds the file at its recorded size. Otherwise it is set aside, so the only copy is never lost while a NAS is offline or after an older database was restored.
+- **Files go back to the account that owned them:** the index records owners by account, and files whose account no longer exists go to the administrator's Recovered files, in a folder named after the old owner, never to someone who now has that name.
+
 ## 1.0.2
 
 Safer restores and smaller backups.

@@ -151,21 +151,25 @@ func (a *App) cleanupLibraryFiles(now time.Time) error {
 // deleted: it may belong to files a restored older database does not know.
 // Versions whose file row is gone count as referenced everywhere.
 func (a *App) collectOrphanBlobs() error {
-	rows, e := a.db.Query("SELECT id,backend FROM files UNION SELECT v.blob,COALESCE(f.backend,'') FROM text_versions v LEFT JOIN files f ON f.id=v.file_id")
+	// Every stored object the database knows, by location, with the size it
+	// should have.
+	rows, e := a.db.Query(`SELECT f.id,f.backend,COALESCE((SELECT v.size FROM text_versions v WHERE v.blob=f.id),f.offset) FROM files f
+ UNION ALL SELECT v.blob,COALESCE(f.backend,''),v.size FROM text_versions v LEFT JOIN files f ON f.id=v.file_id WHERE f.id IS NULL OR v.blob<>f.id`)
 	if e != nil {
 		return e
 	}
-	referenced := map[string]map[string]bool{}
+	referenced := map[string]map[string]int64{}
 	for rows.Next() {
 		var id, loc string
-		if e = rows.Scan(&id, &loc); e != nil {
+		var size int64
+		if e = rows.Scan(&id, &loc, &size); e != nil {
 			rows.Close()
 			return e
 		}
 		if referenced[loc] == nil {
-			referenced[loc] = map[string]bool{}
+			referenced[loc] = map[string]int64{}
 		}
-		referenced[loc][id] = true
+		referenced[loc][id] = size
 	}
 	e = rows.Err()
 	rows.Close()
@@ -202,8 +206,10 @@ func (a *App) collectOrphanBlobs() error {
 				}
 				continue
 			}
-			if validToken(name) && !referenced[loc][name] && !referenced[""][name] && !entry.IsDir() {
-				if elsewhere(referenced, loc, name) {
+			_, here := referenced[loc][name]
+			_, anywhere := referenced[""][name]
+			if validToken(name) && !here && !anywhere && !entry.IsDir() {
+				if a.copyElsewhere(referenced, loc, name) {
 					if e = a.discardStored(filepath.Join(dir, name)); e != nil && !os.IsNotExist(e) {
 						return e
 					}
@@ -228,10 +234,22 @@ func (a *App) collectOrphanBlobs() error {
 	return nil
 }
 
-// elsewhere reports whether another location holds the file that owns name.
-func elsewhere(referenced map[string]map[string]bool, loc, name string) bool {
+// copyElsewhere reports whether the file that owns name is verifiably stored
+// in another location: that location is reachable and holds the object at
+// its recorded size. Only then is this copy a leftover that may be deleted;
+// otherwise it may be the only one (the other location offline, or an older
+// database restored) and is set aside instead.
+func (a *App) copyElsewhere(referenced map[string]map[string]int64, loc, name string) bool {
 	for other, names := range referenced {
-		if other != loc && other != "" && names[name] {
+		size, ok := names[name]
+		if other == loc || other == "" || !ok {
+			continue
+		}
+		dir, e := a.blobDir(other)
+		if e != nil {
+			continue
+		}
+		if info, e := os.Lstat(filepath.Join(dir, name)); e == nil && info.Mode().IsRegular() && info.Size() == size {
 			return true
 		}
 	}

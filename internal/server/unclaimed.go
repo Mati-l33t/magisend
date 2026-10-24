@@ -32,8 +32,11 @@ const (
 )
 
 type indexEntry struct {
-	Name    string `json:"name"`
-	Owner   string `json:"owner,omitempty"`
+	Name  string `json:"name"`
+	Owner string `json:"owner,omitempty"`
+	// The owner's account ID; files only go back to that account, never to
+	// whoever has the name now.
+	OwnerID string `json:"owner_id,omitempty"`
 	Folder  string `json:"folder,omitempty"`
 	Created int64  `json:"created,omitempty"`
 	Size    int64  `json:"size"`
@@ -152,36 +155,36 @@ func (a *App) writeStorageIndexes(now time.Time) error {
 		}
 		indexes[loc][blob] = entry
 	}
-	rows, e = a.db.Query(`SELECT f.id,f.backend,f.name,COALESCE(u.username,''),COALESCE(l.folder_id,''),s.created,f.size
+	rows, e = a.db.Query(`SELECT f.id,f.backend,f.name,COALESCE(u.username,''),COALESCE(s.owner,''),COALESCE(l.folder_id,''),s.created,f.size
  FROM files f JOIN shares s ON s.id=f.share_id LEFT JOIN users u ON u.id=s.owner LEFT JOIN library_files l ON l.file_id=f.id`)
 	if e != nil {
 		return e
 	}
 	for rows.Next() {
-		var id, loc, name, owner, folder string
+		var id, loc, name, owner, ownerID, folder string
 		var created, size int64
-		if e = rows.Scan(&id, &loc, &name, &owner, &folder, &created, &size); e != nil {
+		if e = rows.Scan(&id, &loc, &name, &owner, &ownerID, &folder, &created, &size); e != nil {
 			rows.Close()
 			return e
 		}
-		add(loc, id, indexEntry{Name: name, Owner: owner, Folder: folderPath(folder), Created: created, Size: size})
+		add(loc, id, indexEntry{Name: name, Owner: owner, OwnerID: ownerID, Folder: folderPath(folder), Created: created, Size: size})
 	}
 	rows.Close()
-	rows, e = a.db.Query(`SELECT v.blob,f.backend,v.name,COALESCE(u.username,''),COALESCE(l.folder_id,''),v.created,v.size,v.number
+	rows, e = a.db.Query(`SELECT v.blob,f.backend,v.name,COALESCE(u.username,''),COALESCE(s.owner,''),COALESCE(l.folder_id,''),v.created,v.size,v.number
  FROM text_versions v JOIN files f ON f.id=v.file_id JOIN shares s ON s.id=f.share_id LEFT JOIN users u ON u.id=s.owner LEFT JOIN library_files l ON l.file_id=f.id
  WHERE v.blob<>f.id`)
 	if e != nil {
 		return e
 	}
 	for rows.Next() {
-		var blob, loc, name, owner, folder string
+		var blob, loc, name, owner, ownerID, folder string
 		var created, size int64
 		var number int
-		if e = rows.Scan(&blob, &loc, &name, &owner, &folder, &created, &size, &number); e != nil {
+		if e = rows.Scan(&blob, &loc, &name, &owner, &ownerID, &folder, &created, &size, &number); e != nil {
 			rows.Close()
 			return e
 		}
-		add(loc, blob, indexEntry{Name: name, Owner: owner, Folder: folderPath(folder), Created: created, Size: size, Version: number})
+		add(loc, blob, indexEntry{Name: name, Owner: owner, OwnerID: ownerID, Folder: folderPath(folder), Created: created, Size: size, Version: number})
 	}
 	rows.Close()
 
@@ -344,10 +347,19 @@ func (a *App) restoreUnclaimed(f UnclaimedFile, admin User, n int) error {
 	}
 	owner := admin.ID
 	name, folderPath := f.Name, f.Folder
-	if f.Known && f.Owner != "" {
-		var id string
-		if a.db.QueryRow("SELECT id FROM users WHERE username=?", f.Owner).Scan(&id) == nil {
-			owner = id
+	if f.Known {
+		// Only the very account that owned the file gets it back. When that
+		// account is gone (or the record predates owner IDs), it goes to the
+		// administrator, in a folder named after the old owner.
+		var n int
+		if f.OwnerID != "" && a.db.QueryRow("SELECT COUNT(*) FROM users WHERE id=?", f.OwnerID).Scan(&n) == nil && n == 1 {
+			owner = f.OwnerID
+		} else {
+			who := f.Owner
+			if who == "" {
+				who = "unknown owner"
+			}
+			folderPath = recoveredFolder + "/" + who + "/" + f.Folder
 		}
 	}
 	if !f.Known || name == "" {

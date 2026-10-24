@@ -166,3 +166,88 @@ func TestUnclaimedFilesExpireOrAreDeleted(t *testing.T) {
 		t.Fatal("left", len(entries))
 	}
 }
+
+// A copy is only deleted as a leftover when the location the database names
+// is reachable and really holds the file; with that location offline, the
+// copy here may be the only one and is set aside.
+func TestCopyIsOnlyDeletedWhenTheOtherIsVerified(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	admin := login(t, a, "mati")
+	share := t.TempDir()
+	nas := addStorage(t, a, admin, share)
+	file := libraryUpload(t, a, admin, "", "moved.txt", "only copy?").Files[0].ID
+	// The database says the file is on the NAS, but the bytes are only here.
+	if _, e := a.db.Exec("UPDATE files SET backend=? WHERE id=?", nas, file); e != nil {
+		t.Fatal(e)
+	}
+	a.stores.mu.Lock()
+	a.stores.locations[nas].online = false
+	a.stores.mu.Unlock()
+	a.Cleanup(time.Now())
+	if _, e := os.Stat(filepath.Join(a.root, "blobs", unclaimedDir, file)); e != nil {
+		t.Fatal("the possibly only copy was not set aside", e)
+	}
+	// Back online without the file there: still kept aside.
+	a.stores.mu.Lock()
+	a.stores.locations[nas].online = true
+	a.stores.mu.Unlock()
+	a.Cleanup(time.Now())
+	if _, e := os.Stat(filepath.Join(a.root, "blobs", unclaimedDir, file)); e != nil {
+		t.Fatal("set-aside copy lost", e)
+	}
+	// A true leftover: the NAS holds the file at its size, so the local copy goes.
+	other := libraryUpload(t, a, admin, "", "leftover.txt", "twice").Files[0].ID
+	data, _ := os.ReadFile(filepath.Join(a.root, "blobs", other))
+	os.WriteFile(filepath.Join(share, storageDirName, other), data, 0600)
+	a.db.Exec("UPDATE files SET backend=? WHERE id=?", nas, other)
+	a.Cleanup(time.Now())
+	if _, e := os.Stat(filepath.Join(a.root, "blobs", other)); !os.IsNotExist(e) {
+		t.Fatal("leftover copy kept", e)
+	}
+	if _, e := os.Stat(filepath.Join(a.root, "blobs", unclaimedDir, other)); !os.IsNotExist(e) {
+		t.Fatal("leftover copy set aside", e)
+	}
+	// A copy of the wrong size elsewhere does not count.
+	third := libraryUpload(t, a, admin, "", "third.txt", "the real one").Files[0].ID
+	os.WriteFile(filepath.Join(share, storageDirName, third), []byte("short"), 0600)
+	a.db.Exec("UPDATE files SET backend=? WHERE id=?", nas, third)
+	a.Cleanup(time.Now())
+	if _, e := os.Stat(filepath.Join(a.root, "blobs", unclaimedDir, third)); e != nil {
+		t.Fatal("copy deleted although the other had the wrong size", e)
+	}
+}
+
+// Files go back to the account that owned them, never to someone who has the
+// name now.
+func TestRestoredFilesFollowTheAccountNotTheName(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	admin := login(t, a, "mati")
+	gone := randomID()
+	stray := randomID()
+	os.WriteFile(filepath.Join(a.root, "blobs", stray), []byte("private"), 0600)
+	index := storageIndex{Files: map[string]indexEntry{stray: {Name: "diary.txt", Owner: "anna", OwnerID: gone, Folder: "Private", Size: 7}}}
+	data, _ := json.Marshal(index)
+	os.WriteFile(filepath.Join(a.root, "blobs", storageIndexFile), data, 0600)
+	if _, e := a.addUser("anna", "correct horse battery staple", "user", GiB); e != nil {
+		t.Fatal(e)
+	}
+	a.Cleanup(time.Now())
+	folderCall(t, a, admin, "POST", "/api/admin/storage/unclaimed/restore", `{}`, 200)
+	var annas []LibraryFile
+	json.Unmarshal(call(a, "GET", "/api/library/files", "", login(t, a, "anna")).Body.Bytes(), &annas)
+	if len(annas) != 0 {
+		t.Fatal("the new anna got the old anna's file", annas)
+	}
+	var mine []LibraryFile
+	json.Unmarshal(call(a, "GET", "/api/library/files", "", admin).Body.Bytes(), &mine)
+	if len(mine) != 1 || mine[0].Name != "diary.txt" {
+		t.Fatal(mine)
+	}
+	var folder, parent, top string
+	a.db.QueryRow("SELECT f.name,p.name,g.name FROM folders f JOIN folders p ON p.id=f.parent JOIN folders g ON g.id=p.parent WHERE f.id=?", mine[0].FolderID).Scan(&folder, &parent, &top)
+	if top != recoveredFolder || parent != "anna" || folder != "Private" {
+		t.Fatal("folder", top, parent, folder)
+	}
+}
