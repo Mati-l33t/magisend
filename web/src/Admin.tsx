@@ -31,6 +31,7 @@ import { BackupPanel } from './Backups';
 import { InvitesPanel } from './Invites';
 import { ActivityPanel, OverviewPanel } from './AdminOverview';
 import { StoragePanel } from './StoragePanel';
+import { UnclaimedPanel } from './UnclaimedPanel';
 import { BrandingPanel } from './BrandingPanel';
 import { Modal } from './Modal';
 import { Avatar } from './Profile';
@@ -798,6 +799,7 @@ export default function Admin({
               <p className="muted budget-note">{t('admin.budgetNote')}</p>
             </section>
             <StoragePanel changed={() => void load()} />
+            <UnclaimedPanel changed={() => void load()} />
           </div>
           <div className="admin-section" id="admin-backups">
             <BackupPanel />

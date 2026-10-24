@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -200,7 +199,7 @@ func TestAdminDisableResetAndDeleteAccount(t *testing.T) {
 			t.Fatal(table, n, e)
 		}
 	}
-	blobs, e := os.ReadDir(filepath.Join(a.root, "blobs"))
+	blobs, e := storedFiles(filepath.Join(a.root, "blobs"))
 	if e != nil || len(blobs) != 0 {
 		t.Fatal("stored files were not removed", len(blobs), e)
 	}

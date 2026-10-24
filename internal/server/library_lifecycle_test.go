@@ -53,6 +53,10 @@ func TestTextBlobCleanupRestartAndFailedDeleteReservation(t *testing.T) {
 	if _, e = os.Stat(a.blob(orphan)); !os.IsNotExist(e) {
 		t.Fatal("orphan was not collected", e)
 	}
+	// Unknown files are set aside, not deleted.
+	if _, e = os.Stat(filepath.Join(a.blob(""), unclaimedDir, orphan)); e != nil {
+		t.Fatal("orphan was not set aside", e)
+	}
 	w := call(a, "GET", "/api/library/files/"+file+"/download", "", token)
 	if w.Code != 200 || w.Body.String() != "newer" {
 		t.Fatal(w.Code, w.Body)
@@ -85,7 +89,7 @@ func TestTextBlobCleanupRestartAndFailedDeleteReservation(t *testing.T) {
 	if e = a.Cleanup(time.Now()); e != nil {
 		t.Fatal(e)
 	}
-	entries, e := os.ReadDir(a.blob(""))
+	entries, e := storedFiles(a.blob(""))
 	if e != nil || len(entries) != 0 {
 		t.Fatal("version/original leak", entries, e)
 	}
@@ -93,4 +97,17 @@ func TestTextBlobCleanupRestartAndFailedDeleteReservation(t *testing.T) {
 	if me["user"].(map[string]any)["used"] != float64(0) {
 		t.Fatal(me)
 	}
+}
+
+// storedFiles lists the stored objects in a storage folder, leaving out the
+// index and the files set aside.
+func storedFiles(dir string) ([]string, error) {
+	entries, e := os.ReadDir(dir)
+	names := []string{}
+	for _, entry := range entries {
+		if entry.Name() != storageIndexFile && entry.Name() != unclaimedDir {
+			names = append(names, entry.Name())
+		}
+	}
+	return names, e
 }

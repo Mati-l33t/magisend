@@ -519,6 +519,7 @@ func (a *App) storageRoutes(m *http.ServeMux) {
 		// Without the marker the folder can be added again later.
 		timed(func() bool {
 			_ = os.Remove(filepath.Join(l.Path, storageDirName, storageMarker))
+			_ = os.Remove(filepath.Join(l.Path, storageDirName, storageIndexFile))
 			_ = os.Remove(filepath.Join(l.Path, storageDirName))
 			return true
 		}, false)

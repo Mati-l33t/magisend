@@ -164,6 +164,10 @@ To restore:
 3. If the backup has files, copy files/local/* into <data folder>/blobs/ and each
    files/<location>/* into that location's magisend-files folder.
 4. Start MagiSend again.
+
+Files in the storage folders that the restored database does not know (made after
+this backup) are not deleted: MagiSend sets them aside and lists them under
+Administration → Storage, where they can be put back into the library.
 `
 
 func (a *App) makeBackup(now time.Time) ([]string, error) {
@@ -387,6 +391,9 @@ func missingSummary(missing []string) string {
 }
 
 func (a *App) locationLabel(loc string) string {
+	if loc == localLocation {
+		return filepath.Join(a.root, "blobs")
+	}
 	a.stores.mu.RLock()
 	defer a.stores.mu.RUnlock()
 	if l := a.stores.locations[loc]; l != nil {

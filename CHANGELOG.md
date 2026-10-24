@@ -2,8 +2,11 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
-## Unreleased
+## 1.0.2
 
+Safer restores and smaller backups.
+
+- **Files are never lost after a restore:** files in the storage folders that the database does not know, for example after restoring an older backup, are set aside for 30 days instead of deleted, and can be put back into the library from Administration → Storage. A small index next to the files lets MagiSend put them back with their names, owners and folders.
 - **Backups without storage locations:** backups that include files can now leave out the files on added storage locations (a NAS), which is the default for new settings; the backup page shows how large the database, the data folder's files and each storage location are, and how much space the kept backups will take. Settings that already included files keep including everything.
 
 ## 1.0.1

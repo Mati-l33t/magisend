@@ -164,6 +164,8 @@ File contents can live on a mounted network share or a second disk, while the da
 - **Debian, Ubuntu:** mount anywhere under `/mnt`, `/media` or `/srv` — the service may write there.
 - **Docker:** mount the share into the container, e.g. add `- /mnt/nas/magisend:/mnt/share` under `volumes`, and add `/mnt/share`.
 
+Stored files are named by random IDs; their names, owners and folders are in the database, and each storage folder also keeps a small index (`.magisend-index.json`) of them. A file the database does not know, for example after restoring an older backup, is never deleted straight away: it is set aside in an `.unclaimed` folder for 30 days and listed under **Administration → Storage**, where one click puts it back into its owner's library, in its old folder and with its old name.
+
 The app keeps its files in a folder named `magisend-files` inside the chosen folder and checks every few seconds that it is reachable. If the share is unmounted or the NAS is off, that folder is missing: downloads and uploads of files stored there pause with a clear message, while signing in, browsing the library, links and settings keep working. Nothing is written to the local disk by mistake, and everything works again by itself when the share is back. Use SMB/CIFS rather than NFS with a default `hard` mount, which can freeze processes when the server disappears.
 
 ## Backups

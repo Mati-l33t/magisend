@@ -86,7 +86,7 @@ func TestExistingDBMissingRoot(t *testing.T) {
 		t.Fatal(e)
 	}
 	a.db.Close()
-	if e = os.Remove(filepath.Join(root, "blobs")); e != nil {
+	if e = os.RemoveAll(filepath.Join(root, "blobs")); e != nil {
 		t.Fatal(e)
 	}
 	b, e := NewApp(root, "")

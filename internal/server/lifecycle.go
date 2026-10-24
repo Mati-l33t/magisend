@@ -98,7 +98,10 @@ func (a *App) Cleanup(now time.Time) error {
 	}
 	if e = a.collectOrphanBlobs(); e != nil {
 		failures = append(failures, e)
+	} else if e = a.writeStorageIndexes(now); e != nil {
+		failures = append(failures, e)
 	}
+	a.expireUnclaimed(now)
 	return errors.Join(failures...)
 }
 func (a *App) lifecycleRoutes(m *http.ServeMux) {

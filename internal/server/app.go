@@ -33,6 +33,7 @@ type App struct {
 	db                            *sql.DB
 	root, publicOrigin            string
 	setupCode                     string
+	indexSums                     map[string][32]byte
 	mu                            sync.Mutex
 	attempts                      map[string]attempt
 	mutations, uploads, downloads chan struct{}
@@ -128,7 +129,7 @@ func NewApp(root, origin string) (*App, error) {
 			return nil, e
 		}
 	}
-	a := &App{db: db, root: root, publicOrigin: origin, attempts: make(map[string]attempt), mutations: make(chan struct{}, 8), uploads: make(chan struct{}, 4), downloads: make(chan struct{}, 4), thumbs: make(chan string, thumbQueueDepth), ui: webInterface(), updates: newUpdates(), mail: make(chan outgoingMail, emailQueueDepth), push: make(chan pushJob, emailQueueDepth), sendMail: sendSMTP}
+	a := &App{db: db, root: root, publicOrigin: origin, attempts: make(map[string]attempt), mutations: make(chan struct{}, 8), uploads: make(chan struct{}, 4), downloads: make(chan struct{}, 4), thumbs: make(chan string, thumbQueueDepth), ui: webInterface(), updates: newUpdates(), mail: make(chan outgoingMail, emailQueueDepth), push: make(chan pushJob, emailQueueDepth), sendMail: sendSMTP, indexSums: map[string][32]byte{}}
 	go a.thumbnailWorker()
 	if e = a.loadStorage(); e != nil {
 		db.Close()
@@ -146,6 +147,11 @@ func NewApp(root, origin string) (*App, error) {
 	if e = a.collectOrphanBlobs(); e != nil {
 		db.Close()
 		return nil, e
+	}
+	// After unknown files were set aside, so a restored older database cannot
+	// erase what the index knew about them.
+	if e = a.writeStorageIndexes(time.Now()); e != nil {
+		log.Print("storage index: ", e)
 	}
 	if e = a.prepareSetupCode(); e != nil {
 		db.Close()
@@ -445,6 +451,7 @@ func (a *App) Handler() http.Handler {
 	a.profileRoutes(m)
 	a.resumeRoutes(m)
 	a.storageRoutes(m)
+	a.unclaimedRoutes(m)
 	a.libraryShareRoutes(m)
 	a.textRoutes(m)
 	a.versionRoutes(m)

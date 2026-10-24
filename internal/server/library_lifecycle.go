@@ -144,10 +144,12 @@ func (a *App) cleanupLibraryFiles(now time.Time) error {
 	return nil
 }
 
-// collectOrphanBlobs removes stored objects no file refers to, in every
+// collectOrphanBlobs handles stored objects no file refers to, in every
 // reachable location. An object belongs to the location its file names, so
-// the copy left behind by a move is collected too. Versions whose file row is
-// gone count as referenced everywhere.
+// the copy a move left behind elsewhere is deleted. Any other unknown object
+// is set aside, with what the location's index knew about it, instead of
+// deleted: it may belong to files a restored older database does not know.
+// Versions whose file row is gone count as referenced everywhere.
 func (a *App) collectOrphanBlobs() error {
 	rows, e := a.db.Query("SELECT id,backend FROM files UNION SELECT v.blob,COALESCE(f.backend,'') FROM text_versions v LEFT JOIN files f ON f.id=v.file_id")
 	if e != nil {
@@ -189,6 +191,7 @@ func (a *App) collectOrphanBlobs() error {
 		if e != nil {
 			return e
 		}
+		var index map[string]indexEntry
 		for _, entry := range entries {
 			name := entry.Name()
 			// Token uploads and moves left behind by a crash are removed after
@@ -200,13 +203,39 @@ func (a *App) collectOrphanBlobs() error {
 				continue
 			}
 			if validToken(name) && !referenced[loc][name] && !referenced[""][name] && !entry.IsDir() {
-				if e = a.discardStored(filepath.Join(dir, name)); e != nil && !os.IsNotExist(e) {
+				if elsewhere(referenced, loc, name) {
+					if e = a.discardStored(filepath.Join(dir, name)); e != nil && !os.IsNotExist(e) {
+						return e
+					}
+					continue
+				}
+				if index == nil {
+					index = readStorageIndex(dir)
+					if index == nil {
+						index = map[string]indexEntry{}
+					}
+				}
+				var known *indexEntry
+				if entry, ok := index[name]; ok {
+					known = &entry
+				}
+				if e = setAside(dir, name, known, time.Now()); e != nil && !os.IsNotExist(e) {
 					return e
 				}
 			}
 		}
 	}
 	return nil
+}
+
+// elsewhere reports whether another location holds the file that owns name.
+func elsewhere(referenced map[string]map[string]bool, loc, name string) bool {
+	for other, names := range referenced {
+		if other != loc && other != "" && names[name] {
+			return true
+		}
+	}
+	return false
 }
 func (a *App) verifyHistoryStorage() error {
 	rows, e := a.db.Query(`SELECT v.blob,v.size,f.backend FROM text_versions v JOIN files f ON f.id=v.file_id WHERE NOT EXISTS(SELECT 1 FROM file_deleting d WHERE d.file_id=f.id) AND NOT EXISTS(SELECT 1 FROM deleting d WHERE d.share_id=f.share_id)`)
