@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for MagiSend update requests from the admin page
+
+[Path]
+PathExists=/var/lib/magisend/.update-requested
+Unit=magisend-update.service
+
+[Install]
+WantedBy=multi-user.target

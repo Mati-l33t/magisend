@@ -1,0 +1,17 @@
+# Build output
+/bin/
+/dist-release/
+/magisend
+/web/dist/
+/web/node_modules
+
+# Test output
+/web/test-results/
+/web/playwright-report/
+/web/e2e-report.json
+/go-test-report.json
+
+# Local data and secrets
+*.sqlite*
+.env
+secrets/

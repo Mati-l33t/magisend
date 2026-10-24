@@ -1,0 +1,22 @@
+# Security
+
+## Reporting a vulnerability
+
+Please do not open a public issue for security problems. Use GitHub's **private vulnerability reporting** on this repository (Security → Report a vulnerability) with steps to reproduce and the affected version. You will get a reply as soon as possible, and a fix and advisory will be published once it is resolved.
+
+## Design summary
+
+- **Accounts**: passwords are hashed with bcrypt (cost 12). Failed sign-ins are limited per visitor and per account, and responses do not reveal whether a username exists. Sessions are random tokens (stored hashed) in `HttpOnly`, `SameSite=Strict` cookies, `Secure` when served over HTTPS. Changing or resetting a password and disabling an account end existing sessions.
+- **Requests**: every state-changing API request requires a custom header and a same-origin `Origin`, which blocks cross-site request forgery. Request bodies and upload chunks have size limits.
+- **Headers**: a Content-Security-Policy without inline scripts or styles, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, and HSTS for HTTPS origins.
+- **Files**: downloads are always sent as attachments. Only validated PNG, JPEG and GIF images are previewed; no user content is rendered as HTML or script. Storage access refuses symlinks and non-regular files.
+- **Shares**: link passwords are hashed; write access for recipients requires sign-in and is checked on every request, so revoking it takes effect immediately.
+- **Limits**: per-user and global quotas are reserved before bytes are accepted, so concurrent uploads cannot exceed them.
+
+## Deployment advice
+
+- Serve MagiSend over **HTTPS** whenever it is reachable from outside a trusted network; plain HTTP exposes passwords and files.
+- Create the first administrator immediately after installation.
+- Use the installers or the Docker image: both run MagiSend as an unprivileged user (a hardened systemd service or a non-root container).
+- Updates are downloaded from GitHub releases and verified against the published SHA-256 checksums before they are installed.
+- Back up the data directory regularly (see `docs/operations.md`).

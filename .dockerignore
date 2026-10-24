@@ -1,0 +1,10 @@
+.git
+bin
+dist-release
+data
+web/node_modules
+web/dist
+web/test-results
+web/folders-evidence
+web/folders-qa-results
+web/playwright-report

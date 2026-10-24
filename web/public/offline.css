@@ -1,0 +1,36 @@
+body {
+  margin: 0;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: #050505;
+  color: #f4f3f0;
+  font-family: system-ui, sans-serif;
+  text-align: center;
+}
+main {
+  max-width: 360px;
+  padding: 24px;
+}
+img {
+  border-radius: 4px;
+}
+h1 {
+  margin: 24px 0 8px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+p {
+  color: #a3a19c;
+  line-height: 1.5;
+}
+a {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 11px 18px;
+  background: #ff5f00;
+  color: #0a0a0a;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 3px;
+}

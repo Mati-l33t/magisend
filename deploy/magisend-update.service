@@ -1,0 +1,13 @@
+[Unit]
+Description=MagiSend updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Runs update.sh as root when the admin page requests an update. The request
+# carries no parameters: update.sh looks up and verifies the latest release.
+Type=oneshot
+User=root
+ExecStartPre=/bin/rm -f /var/lib/magisend/.update-requested
+ExecStart=/opt/magisend/update.sh
+TimeoutStartSec=15min

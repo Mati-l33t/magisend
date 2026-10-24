@@ -1,0 +1,46 @@
+[Unit]
+Description=MagiSend file sharing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=magisend
+Group=magisend
+WorkingDirectory=/opt/magisend
+ExecStart=/opt/magisend/magisend
+Environment=MAGISEND_DATA=/var/lib/magisend
+Environment=MAGISEND_LISTEN=0.0.0.0:8080
+Environment=MAGISEND_INSTALL=native
+Environment=MAGISEND_UPDATER=systemd
+# Local settings (public origin, trusted proxies, port) live here.
+EnvironmentFile=-/etc/magisend/environment
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/magisend
+# Storage folders added in Administration, usually mounted shares.
+ReadWritePaths=-/mnt -/media -/srv
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=2048
+TasksMax=128
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

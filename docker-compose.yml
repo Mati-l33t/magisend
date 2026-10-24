@@ -1,0 +1,21 @@
+services:
+  magisend:
+    image: ghcr.io/mati-l33t/magisend:latest
+    container_name: magisend
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    volumes:
+      - magisend_data:/data
+      # Optional: a NAS share mounted on the host, added in Administration →
+      # Storage locations as /mnt/share.
+      # - /mnt/nas/magisend:/mnt/share
+    environment:
+      # Public address when served through a reverse proxy with HTTPS, e.g.
+      # MAGISEND_PUBLIC_ORIGIN: https://share.example.com
+      MAGISEND_PUBLIC_ORIGIN: ''
+      # Address(es) of that reverse proxy, so rate limits see real visitors.
+      MAGISEND_TRUSTED_PROXIES: ''
+
+volumes:
+  magisend_data:

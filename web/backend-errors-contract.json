@@ -1,0 +1,248 @@
+{
+  "invalid_input": ["Invalid input", "Ogiltiga indata"],
+  "invalid_credentials": [
+    "Username: 3–40 lowercase letters/digits, dot, underscore or hyphen. Password: 12–72 UTF-8 bytes",
+    "Användarnamn: 3–40 gemener/siffror, punkt, understreck eller bindestreck. Lösenord: 12–72 UTF-8-byte"
+  ],
+  "setup_complete": ["Setup is already complete", "Installationen är redan slutförd"],
+  "database_unavailable": ["The database is unavailable", "Databasen är inte tillgänglig"],
+  "not_found": ["Not found", "Hittades inte"],
+  "security_header_required": ["Missing security header", "Saknad säkerhetsheader"],
+  "invalid_origin": ["Invalid request origin", "Felaktigt ursprung"],
+  "internal_error": ["Internal error", "Internt fel"],
+  "operation_failed": ["The operation could not be completed", "Operationen kunde inte slutföras"],
+  "login_required": ["Log in to continue", "Logga in för att fortsätta"],
+  "admin_only": ["Administrators only", "Endast administratörer"],
+  "too_many_attempts_wait": [
+    "Too many attempts. Wait 15 minutes",
+    "För många försök. Vänta 15 minuter"
+  ],
+  "invalid_login": ["Incorrect username or password", "Fel användarnamn eller lösenord"],
+  "registration_closed": ["Registration is closed", "Registreringen är stängd"],
+  "too_many_attempts": ["Too many attempts", "För många försök"],
+  "account_create_failed": [
+    "Could not create the account. Check the username and password",
+    "Kontot kunde inte skapas. Kontrollera namn och lösenord"
+  ],
+  "too_many_requests": ["Too many concurrent requests", "För många samtidiga förfrågningar"],
+  "metadata_limit": ["Too many shares or files", "För många delningar eller filer"],
+  "file_limit": [
+    "The file limit is reached. Delete files or ask an administrator to raise it",
+    "Filgränsen är nådd. Radera filer eller be en administratör höja den"
+  ],
+  "share_rate_limit": [
+    "Too many new shares. Wait 15 minutes",
+    "För många nya delningar. Vänta 15 minuter"
+  ],
+  "invalid_quota": [
+    "The quota must be between 0 and the storage budget",
+    "Kvoten måste vara mellan 0 och lagringsbudgeten"
+  ],
+  "account_not_found": ["The account does not exist", "Kontot finns inte"],
+  "invalid_policy": [
+    "Invalid policy. Limits must fit within the storage budget (at least 1 GiB); validity 1–365 days",
+    "Ogiltig policy. Gränserna måste rymmas i lagringsbudgeten (minst 1 GiB), giltighet 1–365 dagar"
+  ],
+  "share_not_found": ["The share does not exist", "Delningen finns inte"],
+  "share_expired": ["The share has expired", "Delningen har gått ut"],
+  "incorrect_password": ["Incorrect password", "Fel lösenord"],
+  "zip_file_limit": ["Too many files in the share", "För många filer i delningen"],
+  "storage_unverified": ["The storage could not be verified", "Lagringen kan inte verifieras"],
+  "invalid_share": [
+    "Invalid share: 1–100 files; validity: 1–365 days",
+    "Ogiltig delning: 1–100 filer, giltighet 1–365 dagar"
+  ],
+  "invalid_file": [
+    "Invalid filename or file/share limit exceeded",
+    "Ogiltigt filnamn eller fil-/delningsgräns överskriden"
+  ],
+  "quota_exceeded": ["Your storage quota is insufficient", "Din lagringskvot räcker inte"],
+  "capacity_exceeded": ["The application storage budget is full", "Appens lagringsbudget är full"],
+  "disk_full": ["Insufficient free disk space", "Otillräckligt ledigt diskutrymme"],
+  "invalid_offset": ["Invalid upload offset", "Fel uppladdningsposition"],
+  "upload_not_found": ["The upload does not exist", "Uppladdningen finns inte"],
+  "upload_conflict": [
+    "Incorrect offset, completed or expired share",
+    "Fel position, färdig eller utgången delning"
+  ],
+  "chunk_too_large": [
+    "An upload chunk must not exceed 4 MiB",
+    "Uppladdningsdel måste vara högst 4 MiB"
+  ],
+  "upload_incomplete": ["All files must be uploaded first", "Alla filer måste laddas upp först"],
+  "share_password_required": ["The share requires a password", "Delningen kräver lösenord"],
+  "file_not_found": ["The file does not exist", "Filen finns inte"],
+  "preview_unsupported": [
+    "This file cannot be previewed safely",
+    "Den här filen kan inte förhandsvisas säkert"
+  ],
+  "slug_invalid": [
+    "The custom link is invalid. Use 3–48 characters: a–z, 0–9 and hyphen",
+    "Den egna länken är ogiltig. Använd 3–48 tecken: a–z, 0–9 och bindestreck"
+  ],
+  "slug_taken": [
+    "That link name is already taken. Choose another",
+    "Det länknamnet är upptaget. Välj ett annat"
+  ],
+  "invalid_description": ["The description is too long", "Beskrivningen är för lång"],
+  "thumbnail_unavailable": [
+    "No thumbnail is available for this file",
+    "Ingen miniatyrbild finns för den här filen"
+  ],
+  "account_disabled": ["This account is disabled", "Kontot är inaktiverat"],
+  "cannot_change_own_account": [
+    "You cannot disable or delete your own account",
+    "Du kan inte inaktivera eller radera ditt eget konto"
+  ],
+  "wrong_password": ["The current password is incorrect", "Det nuvarande lösenordet är fel"],
+  "invalid_password": ["Password: 12–72 UTF-8 bytes", "Lösenord: 12–72 UTF-8-byte"],
+  "update_check_disabled": ["Update checks are turned off", "Uppdateringskontroller är avstängda"],
+  "update_check_failed": [
+    "Could not reach the release server. Try again later.",
+    "Kunde inte nå releaseservern. Försök igen senare."
+  ],
+  "update_not_supported": [
+    "This installation is updated outside MagiSend",
+    "Den här installationen uppdateras utanför MagiSend"
+  ],
+  "update_not_available": ["MagiSend is already up to date", "MagiSend är redan uppdaterad"],
+  "invalid_email_settings": [
+    "Check the mail server settings",
+    "Kontrollera e-postserverns inställningar"
+  ],
+  "invalid_email": ["Enter a valid email address", "Ange en giltig e-postadress"],
+  "email_not_configured": [
+    "Email is not set up. An administrator can configure it under Administration.",
+    "E-post är inte konfigurerad. En administratör kan ställa in den under Administration."
+  ],
+  "email_send_failed": ["The email could not be sent", "E-postmeddelandet kunde inte skickas"],
+  "too_many_recipients": ["Enter 1–10 email addresses", "Ange 1–10 e-postadresser"],
+  "share_not_available": [
+    "This share is not available for sending",
+    "Den här delningen kan inte skickas"
+  ],
+  "email_queue_full": [
+    "Too many emails are waiting. Try again in a minute.",
+    "För många e-postmeddelanden väntar. Försök igen om en minut."
+  ],
+  "account_email_missing": [
+    "Add your email address in the account menu first",
+    "Lägg först till din e-postadress i kontomenyn"
+  ],
+  "download_limit_reached": [
+    "This file has no downloads left",
+    "Filen har inga nedladdningar kvar"
+  ],
+  "preview_unavailable": [
+    "Preview is not available for this link",
+    "Förhandsvisning är inte tillgänglig för den här länken"
+  ],
+  "request_not_found": ["This upload link does not exist", "Uppladdningslänken finns inte"],
+  "request_closed": ["This upload link is closed", "Uppladdningslänken är stängd"],
+  "request_password_required": [
+    "This upload link requires a password",
+    "Uppladdningslänken kräver lösenord"
+  ],
+  "request_full": [
+    "There is not enough space to receive these files",
+    "Det finns inte tillräckligt med utrymme för filerna"
+  ],
+  "invalid_upload": ["Invalid file name or file too large", "Ogiltigt filnamn eller för stor fil"],
+  "upload_complete": ["The upload is already complete", "Uppladdningen är redan klar"],
+  "upload_offset": ["The upload is out of step. Try again", "Uppladdningen är ur fas. Försök igen"],
+  "two_factor_required": [
+    "Enter the code from your authenticator app",
+    "Ange koden från din autentiseringsapp"
+  ],
+  "invalid_code": [
+    "The code is wrong or has already been used",
+    "Koden är fel eller har redan använts"
+  ],
+  "two_factor_off": ["Two-step login is not turned on", "Tvåstegsinloggning är inte påslagen"],
+  "invite_invalid": [
+    "This invitation is invalid, used or expired",
+    "Inbjudan är ogiltig, använd eller har gått ut"
+  ],
+  "reset_invalid": [
+    "This reset link is invalid, used or expired. Ask for a new one",
+    "Återställningslänken är ogiltig, använd eller har gått ut. Be om en ny"
+  ],
+  "password_reset_unavailable": [
+    "Password reset by email is not set up. Ask an administrator",
+    "Återställning via e-post är inte inställd. Fråga en administratör"
+  ],
+  "invalid_site_url": [
+    "Enter a web address like https://share.example.com",
+    "Ange en webbadress som https://share.example.com"
+  ],
+  "invalid_token": [
+    "The API token is invalid or revoked",
+    "API-nyckeln är ogiltig eller återkallad"
+  ],
+  "invalid_logo": [
+    "The logo must be a PNG of at most 1024 × 1024 pixels and 256 KB",
+    "Logotypen måste vara en PNG på högst 1024 × 1024 pixlar och 256 kB"
+  ],
+  "invalid_avatar": [
+    "The picture must be a PNG, JPEG or GIF of at most 4 MB and at least 32 × 32 pixels",
+    "Bilden måste vara en PNG, JPEG eller GIF på högst 4 MB och minst 32 × 32 pixlar"
+  ],
+  "storage_offline": [
+    "The storage folder can't be reached right now. Try again later",
+    "Lagringsmappen går inte att nå just nu. Försök igen senare"
+  ],
+  "storage_path_invalid": [
+    "Choose a full folder path outside the system and data folders, like /mnt/share",
+    "Välj en fullständig sökväg utanför system- och datamapparna, till exempel /mnt/share"
+  ],
+  "storage_path_missing": [
+    "That folder does not exist. Mount the share first, then add it",
+    "Mappen finns inte. Montera delningen först och lägg sedan till den"
+  ],
+  "storage_in_use": [
+    "That folder already holds a magisend-files folder that is not empty. Choose another folder",
+    "Mappen innehåller redan en magisend-files-mapp som inte är tom. Välj en annan mapp"
+  ],
+  "storage_not_writable": [
+    "The app cannot write to that folder. Check its owner and permissions",
+    "Appen kan inte skriva i mappen. Kontrollera ägare och behörigheter"
+  ],
+  "storage_exists": ["That folder is already added", "Mappen är redan tillagd"],
+  "storage_busy": [
+    "Not possible while files are stored there, it is in use for new files or a move is running",
+    "Inte möjligt medan filer ligger där, den används för nya filer eller en flytt pågår"
+  ],
+  "storage_full": [
+    "There is not enough free space there for all files",
+    "Det finns inte tillräckligt med ledigt utrymme där för alla filer"
+  ],
+  "replace_location": [
+    "The new version was saved in a different storage location. Move the file there first, or try again after the move.",
+    "Den nya versionen sparades på en annan lagringsplats. Flytta filen dit först, eller försök igen efter flytten."
+  ],
+  "push_invalid": [
+    "Check the address, the token and the events",
+    "Kontrollera adressen, nyckeln och händelserna"
+  ],
+  "push_failed": [
+    "The test notification could not be delivered",
+    "Testaviseringen kunde inte levereras"
+  ],
+  "zip_invalid": [
+    "This ZIP file cannot be unpacked: it is damaged or its contents do not match.",
+    "Den här ZIP-filen går inte att packa upp: den är skadad eller innehållet stämmer inte."
+  ],
+  "zip_empty": [
+    "There is nothing in this ZIP file to unpack.",
+    "Det finns inget att packa upp i den här ZIP-filen."
+  ],
+  "zip_too_many": [
+    "This ZIP file holds more than 1,000 files; a folder holds at most 1,000.",
+    "ZIP-filen innehåller fler än 1 000 filer; en mapp rymmer högst 1 000."
+  ],
+  "backup_invalid": [
+    "Use an absolute folder MagiSend can write to, a daily or weekly schedule, and keep 1–100 backups.",
+    "Ange en absolut mapp som MagiSend kan skriva i, ett dagligt eller veckovis schema, och behåll 1–100 säkerhetskopior."
+  ],
+  "backup_running": ["A backup is already running.", "En säkerhetskopiering pågår redan."]
+}

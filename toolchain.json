@@ -1,0 +1,7 @@
+{
+  "go": "go1.27.2",
+  "node": "v24.21.0",
+  "npm": "11.19.0",
+  "go_sha256": "ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5",
+  "node_sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
+}
