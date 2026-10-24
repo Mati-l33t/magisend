@@ -176,6 +176,10 @@ func (a *App) lifecycleRoutes(m *http.ServeMux) {
 		if !ok {
 			return
 		}
+		if a.extracting[s.ID] {
+			fail(w, 409, "extraction_running")
+			return
+		}
 		if internal(w, deletionRecorded(a.removeShare(s.ID))) {
 			return
 		}

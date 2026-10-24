@@ -9,6 +9,8 @@
     "Change your own password and two-step login in your account settings",
     "Ändra ditt eget lösenord och din tvåstegsinloggning i dina kontoinställningar"
   ],
+  "extraction_running": ["The ZIP file is still being unpacked", "ZIP-filen packas fortfarande upp"],
+  "location_not_removed": ["The location data in a photo could not be removed", "Platsdata i ett foto kunde inte tas bort"],
   "two_factor_on": [
     "Two-step login is already on. Turn it off first",
     "Tvåstegsinloggning är redan på. Stäng av den först"

@@ -307,8 +307,10 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		authorized = true
-		e = a.db.QueryRow(`SELECT f.size,f.offset,s.published,s.expires FROM files f JOIN shares s ON s.id=f.share_id WHERE f.id=? AND s.owner=? AND NOT EXISTS (SELECT 1 FROM deleting d WHERE d.share_id=s.id)`, id, u.ID).Scan(&size, &current, &published, &expires)
-		if e != nil {
+		var shareID string
+		e = a.db.QueryRow(`SELECT f.size,f.offset,s.published,s.expires,s.id FROM files f JOIN shares s ON s.id=f.share_id WHERE f.id=? AND s.owner=? AND NOT EXISTS (SELECT 1 FROM deleting d WHERE d.share_id=s.id)`, id, u.ID).Scan(&size, &current, &published, &expires, &shareID)
+		// Files a ZIP is being unpacked into are written by the extraction only.
+		if e != nil || a.extracting[shareID] {
 			fail(w, 404, "Uppladdningen finns inte")
 			return 0, 0, false
 		}
@@ -477,7 +479,10 @@ func (a *App) shareRoutes(m *http.ServeMux) {
 		if !a.verifyUploadedFiles(w, s) {
 			return
 		}
-		if internal(w, a.scrubShare(s)) {
+		if e := a.scrubShare(s); errors.Is(e, errLocationNotRemoved) {
+			fail(w, 422, "location_not_removed")
+			return
+		} else if internal(w, e) {
 			return
 		}
 		if internal(w, exec(a, "UPDATE shares SET published=1 WHERE id=?", s.ID)) {

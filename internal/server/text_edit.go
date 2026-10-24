@@ -242,7 +242,11 @@ func (a *App) versionRoom(w http.ResponseWriter, f File, size int64, current int
 		fail(w, 413, "Ogiltigt filnamn eller fil-/delningsgräns överskriden")
 		return "", false
 	}
-	if current >= textMaxVersions {
+	// The limit is on the versions kept, not on the highest number: merged
+	// autosaves raise the number without keeping a version.
+	if count, e := a.versionCount(f.ID); internal(w, e) {
+		return "", false
+	} else if count >= textMaxVersions {
 		fail(w, 429, "metadata_limit")
 		return "", false
 	}
@@ -427,4 +431,11 @@ func (a *App) serveText(w http.ResponseWriter, r *http.Request, f File, user str
 		data = []byte(b.Text)
 	}
 	a.saveText(w, f, user, version, data, b.Restore == 0)
+}
+
+// versionCount is how many versions of a file are kept.
+func (a *App) versionCount(file string) (int, error) {
+	var n int
+	e := a.db.QueryRow("SELECT COUNT(*) FROM text_versions WHERE file_id=?", file).Scan(&n)
+	return n, e
 }

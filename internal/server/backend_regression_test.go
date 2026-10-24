@@ -164,14 +164,22 @@ func (b *blockedBody) Read(p []byte) (int, error) {
 }
 func (b *blockedBody) Close() error { return nil }
 func TestSlowJSONDoesNotLock(t *testing.T) {
-	for _, path := range []string{"/api/setup", "/api/login", "/api/register", "/api/public/test/unlock"} {
-		t.Run(path, func(t *testing.T) {
+	for _, route := range [][2]string{
+		{"POST", "/api/setup"}, {"POST", "/api/login"}, {"POST", "/api/register"}, {"POST", "/api/public/test/unlock"},
+		// Signed-in routes that once read their body under the lock.
+		{"POST", "/api/folders"}, {"PATCH", "/api/folders/x"}, {"PATCH", "/api/library/files/x"},
+		{"POST", "/api/library/shares"}, {"PATCH", "/api/library/shares/x"},
+		{"PUT", "/api/library/files/x/text"}, {"POST", "/api/library/files/x/restore"},
+		{"POST", "/api/admin/storage/locations"}, {"PUT", "/api/admin/storage/active"}, {"POST", "/api/admin/storage/move"},
+	} {
+		method, path := route[0], route[1]
+		t.Run(method+" "+path, func(t *testing.T) {
 			a := testApp(t)
 			a.db.Exec("INSERT INTO users VALUES('u','user','invalid','admin',0)")
 			a.db.Exec("UPDATE settings SET registration_open=1")
 			a.db.Exec("INSERT INTO shares VALUES('test','u','test','',?, ?,1)", time.Now().Add(time.Hour).Unix(), time.Now().Unix())
 			b := &blockedBody{make(chan struct{}, 1), make(chan struct{})}
-			r := httptest.NewRequest("POST", path, b)
+			r := httptest.NewRequest(method, path, b)
 			r.Header.Set("X-MagiSend", "1")
 			done := make(chan struct{})
 			go func() { a.Handler().ServeHTTP(httptest.NewRecorder(), r); close(done) }()

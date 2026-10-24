@@ -290,17 +290,28 @@ func (a *App) moveFile(id, target string) error {
 		return e
 	}
 	copied := map[string]bool{}
+	// What each source looked like when it was copied: a source changed since
+	// (location data removed at publish, say) is copied again under mu.
+	seen := map[string]os.FileInfo{}
 	discard := func() {
 		for name := range copied {
 			_ = os.Remove(filepath.Join(targetDir, movingPrefix+name))
 		}
 	}
 	copyOne := func(name string) error {
+		before, _ := os.Lstat(filepath.Join(sourceDir, name))
+		_ = os.Remove(filepath.Join(targetDir, movingPrefix+name))
 		ok, e := copyBlob(filepath.Join(sourceDir, name), filepath.Join(targetDir, movingPrefix+name))
 		if ok {
 			copied[name] = true
+			seen[name] = before
 		}
 		return e
+	}
+	changed := func(name string) bool {
+		now, e := os.Lstat(filepath.Join(sourceDir, name))
+		was := seen[name]
+		return e != nil || was == nil || now.Size() != was.Size() || !now.ModTime().Equal(was.ModTime())
 	}
 	for _, name := range names {
 		if e = copyOne(name); e != nil {
@@ -316,7 +327,7 @@ func (a *App) moveFile(id, target string) error {
 		return e
 	}
 	for _, name := range current {
-		if !copied[name] {
+		if !copied[name] || changed(name) {
 			if e = copyOne(name); e != nil {
 				discard()
 				return e

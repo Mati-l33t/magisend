@@ -361,6 +361,8 @@
   "errors.setup_complete": "Installationen är redan slutförd",
   "errors.setup_code_invalid": "Installationskoden stämmer inte. Den visades när MagiSend installerades och finns i serverns logg.",
   "errors.two_factor_on": "Tvåstegsinloggning är redan på. Stäng av den först för att ställa in en ny autentiseringsapp.",
+  "errors.location_not_removed": "Platsdata i ett foto kunde inte tas bort, så länken publicerades inte. Ta bort filen eller stäng av borttagning av platsdata.",
+  "errors.extraction_running": "ZIP-filen packas fortfarande upp. Försök igen när den är klar.",
   "errors.use_account_settings": "Ändra ditt eget lösenord och din tvåstegsinloggning i dina kontoinställningar, som frågar efter ditt nuvarande lösenord.",
   "errors.database_unavailable": "Databasen är inte tillgänglig",
   "errors.not_found": "Hittades inte",

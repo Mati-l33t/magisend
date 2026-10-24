@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 	"io"
 	"os"
@@ -62,6 +63,11 @@ func shouldScrub(name string) bool {
 	return scrubExtensions[strings.ToLower(filepath.Ext(name))]
 }
 
+// maxTIFFScrub is the largest TIFF read whole to find its location data.
+const maxTIFFScrub = 256 << 20
+
+var errLocationNotRemoved = errors.New("location data could not be removed")
+
 // scrubLocation cleans the file at path in place. It reports whether
 // anything was changed.
 func scrubLocation(path string) (bool, error) {
@@ -81,6 +87,22 @@ func scrubLocation(path string) (bool, error) {
 	}
 	changed := false
 	if bytes.HasPrefix(head, []byte("II*\x00")) || bytes.HasPrefix(head, []byte("MM\x00*")) {
+		// Many TIFF writers put the directory after the image data, so a
+		// larger TIFF is read whole; one too large for that is refused rather
+		// than published with its location.
+		if n == scrubWindow {
+			info, e := file.Stat()
+			if e != nil {
+				return false, e
+			}
+			if info.Size() > maxTIFFScrub {
+				return false, errLocationNotRemoved
+			}
+			head = make([]byte, info.Size())
+			if _, e = file.ReadAt(head, 0); e != nil {
+				return false, e
+			}
+		}
 		changed = scrubTIFF(head) || changed
 	}
 	// JPEG APP1, HEIF Exif items and WebP EXIF chunks all carry the marker
@@ -230,15 +252,31 @@ func scrubPNG(file *os.File) (bool, error) {
 		if kind == "IEND" || size > 64<<20 {
 			break
 		}
-		if kind == "eXIf" || kind == "iTXt" || kind == "tEXt" {
+		if kind == "eXIf" || kind == "iTXt" || kind == "tEXt" || kind == "zTXt" {
 			data := make([]byte, size)
 			if _, e := file.ReadAt(data, at+8); e != nil {
 				return changed, e
 			}
 			done := false
-			if kind == "eXIf" {
+			switch {
+			case kind == "eXIf":
 				done = scrubTIFF(data)
-			} else {
+			case compressedMetadata(kind, data):
+				// Compressed XMP or Exif text cannot be searched; it is replaced
+				// by an empty comment of the same size (the chunk becomes tEXt).
+				comment := []byte("Comment\x00")
+				if len(data) >= len(comment) {
+					copy(data, comment)
+					for i := len(comment); i < len(data); i++ {
+						data[i] = ' '
+					}
+					copy(header[4:8], "tEXt")
+					if _, e := file.WriteAt(header[4:8], at+4); e != nil {
+						return changed, e
+					}
+					done = true
+				}
+			default:
 				done = scrubXMP(data)
 			}
 			if done {
@@ -262,4 +300,38 @@ func scrubPNG(file *os.File) (bool, error) {
 		return true, file.Sync()
 	}
 	return false, nil
+}
+
+// compressedMetadata reports a zTXt chunk, or a compressed iTXt chunk, that
+// holds XMP or a raw Exif profile, whose location fields cannot be reached
+// without inflating it.
+func compressedMetadata(kind string, data []byte) bool {
+	keyword, rest, found := bytes.Cut(data, []byte{0})
+	if !found {
+		return false
+	}
+	name := strings.ToLower(string(keyword))
+	metadata := name == "xml:com.adobe.xmp" || strings.HasPrefix(name, "raw profile type")
+	switch kind {
+	case "zTXt":
+		return metadata
+	case "iTXt":
+		return metadata && len(rest) > 0 && rest[0] == 1
+	}
+	return false
+}
+
+// scrubIfStripped removes location data from a stored object when the share
+// it belongs to strips it. Caller holds mu.
+func (a *App) scrubIfStripped(share, blob, loc string) error {
+	var strip bool
+	if e := a.db.QueryRow("SELECT strip_location FROM shares WHERE id=?", share).Scan(&strip); e != nil || !strip {
+		return e
+	}
+	dir, e := a.blobDir(loc)
+	if e != nil {
+		return e
+	}
+	_, e = scrubLocation(filepath.Join(dir, blob))
+	return e
 }

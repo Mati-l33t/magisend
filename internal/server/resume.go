@@ -62,7 +62,10 @@ func (a *App) resumeRoutes(m *http.ServeMux) {
 			if e = rows.Scan(&p.ID, &p.Created); e != nil {
 				break
 			}
-			list = append(list, p)
+			// A ZIP being unpacked is not an upload anyone can resume or discard.
+			if !a.extracting[p.ID] {
+				list = append(list, p)
+			}
 		}
 		if e == nil {
 			e = rows.Err()

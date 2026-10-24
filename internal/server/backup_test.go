@@ -96,11 +96,11 @@ func TestBackupsHoldTheDatabaseAndFiles(t *testing.T) {
 		a.dueBackup(time.Now().Add(time.Duration(i*25) * time.Hour))
 		waitForBackup(t, a)
 	}
-	if list := listBackups(dir); len(list) != 2 || list[0].Name == name || list[1].Name == name {
+	if list := listBackups(dir, a.installID()); len(list) != 2 || list[0].Name == name || list[1].Name == name {
 		t.Fatal("kept", list)
 	}
-	folderCall(t, a, token, "DELETE", "/api/admin/backups/"+listBackups(dir)[0].Name, `{}`, 200)
-	if len(listBackups(dir)) != 1 {
+	folderCall(t, a, token, "DELETE", "/api/admin/backups/"+listBackups(dir, a.installID())[0].Name, `{}`, 200)
+	if len(listBackups(dir, a.installID())) != 1 {
 		t.Fatal("delete")
 	}
 }

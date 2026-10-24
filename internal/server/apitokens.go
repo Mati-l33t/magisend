@@ -188,7 +188,28 @@ func (a *App) apiUpload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "invalid_input")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, p.MaxShare+1<<20)
+	// The space this upload may use is reserved before a byte is read, so
+	// concurrent uploads cannot together go past the quota, the budget or the
+	// free disk; the reservation is released when the request ends.
+	a.mu.Lock()
+	reservation, rerr := a.reserveTokenUpload(u.ID, p.MaxShare)
+	a.mu.Unlock()
+	if internal(w, rerr) {
+		return
+	}
+	if reservation <= 0 {
+		fail(w, 507, "request_full")
+		return
+	}
+	released := false
+	defer func() {
+		a.mu.Lock()
+		if !released {
+			a.releaseTokenUpload(u.ID, reservation)
+		}
+		a.mu.Unlock()
+	}()
+	r.Body = http.MaxBytesReader(w, &progressReader{reader: r.Body, w: w}, p.MaxShare+1<<20)
 	reader, e := r.MultipartReader()
 	if e != nil {
 		fail(w, 400, "invalid_upload")
@@ -237,12 +258,7 @@ func (a *App) apiUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		files = append(files, received{name: name, path: path})
-		room := min(p.MaxFile, p.MaxShare-total)
-		free, e := a.diskFree()
-		if internal(w, e) {
-			return
-		}
-		room = min(room, free-(512<<20))
+		room := min(p.MaxFile, reservation-total)
 		size, e := io.Copy(out, io.LimitReader(part, room+1))
 		if e == nil {
 			e = out.Sync()
@@ -288,7 +304,16 @@ func (a *App) apiUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !a.storageRoom(w, u.ID, total) {
+	// The bytes are on disk and inside the reservation, which is handed back
+	// now; only the quota and budget are checked again (not the disk, which
+	// already holds them), and the storage location must still exist.
+	a.releaseTokenUpload(u.ID, reservation)
+	released = true
+	if !a.quotaRoom(w, u.ID, total) {
+		return
+	}
+	if dir, e := a.blobDir(loc); !a.knownLocation(loc) || e != nil || dir != folder {
+		fail(w, 503, "storage_unverified")
 		return
 	}
 	if room, e := a.metadataRoom(u.ID, true, len(files)); e != nil && e != errLinkLimit && e != errFileLimit {
@@ -354,3 +379,66 @@ func (a *App) blobEntries() ([]string, error) {
 	}
 	return names, e
 }
+
+// reserveTokenUpload reserves up to limit bytes for a token upload: as much
+// as the quota, the storage budget and the free disk leave after what is
+// already stored or reserved. Caller holds mu.
+func (a *App) reserveTokenUpload(owner string, limit int64) (int64, error) {
+	var quota, used, all, reserved int64
+	if e := a.db.QueryRow("SELECT quota FROM users WHERE id=?", owner).Scan(&quota); e != nil {
+		return 0, e
+	}
+	if e := a.db.QueryRow("SELECT COALESCE(SUM(c.size),0) FROM storage_charges c JOIN files f ON f.id=c.file_id JOIN shares s ON s.id=f.share_id WHERE s.owner=?", owner).Scan(&used); e != nil {
+		return 0, e
+	}
+	if e := a.db.QueryRow("SELECT COALESCE(SUM(size),0) FROM storage_charges").Scan(&all); e != nil {
+		return 0, e
+	}
+	if e := a.db.QueryRow("SELECT COALESCE(SUM(size-offset),0) FROM files").Scan(&reserved); e != nil {
+		return 0, e
+	}
+	budget, e := a.storageBudget()
+	if e != nil {
+		return 0, e
+	}
+	free, e := a.diskFree()
+	if e != nil {
+		return 0, e
+	}
+	room := min(limit, quota-used-a.tokenUploads.user[owner], budget-all-a.tokenUploads.total, free-(512<<20)-reserved-a.tokenUploads.total)
+	if room <= 0 {
+		return 0, nil
+	}
+	a.tokenUploads.total += room
+	a.tokenUploads.user[owner] += room
+	return room, nil
+}
+
+// releaseTokenUpload gives a reservation back. Caller holds mu.
+func (a *App) releaseTokenUpload(owner string, size int64) {
+	a.tokenUploads.total -= size
+	if a.tokenUploads.user[owner] -= size; a.tokenUploads.user[owner] <= 0 {
+		delete(a.tokenUploads.user, owner)
+	}
+}
+
+// progressReader closes a request body that crawls: the read deadline only
+// moves forward once at least minProgress bytes arrived since it last moved.
+type progressReader struct {
+	reader  io.ReadCloser
+	w       http.ResponseWriter
+	read    int64
+	started bool
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	if !p.started || p.read >= minProgress {
+		_ = http.NewResponseController(p.w).SetReadDeadline(time.Now().Add(writeWindow))
+		p.started, p.read = true, 0
+	}
+	n, e := p.reader.Read(b)
+	p.read += int64(n)
+	return n, e
+}
+
+func (p *progressReader) Close() error { return p.reader.Close() }

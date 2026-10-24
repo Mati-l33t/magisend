@@ -8,16 +8,25 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // readBackup returns the newest backup's files by name.
 func readBackup(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
-	list := listBackups(dir)
-	if len(list) == 0 {
+	var newest string
+	var newestTime int64
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		info, e := entry.Info()
+		if e == nil && backupName.MatchString(entry.Name()) && info.ModTime().UnixNano() >= newestTime {
+			newest, newestTime = entry.Name(), info.ModTime().UnixNano()
+		}
+	}
+	if newest == "" {
 		t.Fatal("no backup was made")
 	}
-	archive, e := os.Open(filepath.Join(dir, list[0].Name))
+	archive, e := os.Open(filepath.Join(dir, newest))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -191,5 +200,48 @@ func TestBackupCanLeaveOutStorageLocations(t *testing.T) {
 	json.Unmarshal(call(a, "GET", "/api/admin/backups", "", token).Body.Bytes(), &state)
 	if state.Settings.Storage {
 		t.Fatal("storage kept without files")
+	}
+}
+
+// An incomplete backup never pushes out the last complete one, and another
+// installation's archives in a shared folder are neither listed nor pruned.
+func TestBackupsKeepTheLastCompleteOne(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	libraryUpload(t, a, token, "", "here.txt", "local")
+	share := t.TempDir()
+	id := addStorage(t, a, token, share)
+	dir := filepath.Join(t.TempDir(), "backups")
+	os.MkdirAll(dir, 0700)
+	foreign := "magisend-backup-deadbeef-20260101-000000.tar"
+	os.WriteFile(filepath.Join(dir, foreign), []byte("someone else's"), 0600)
+	folderCall(t, a, token, "PUT", "/api/admin/backups", `{"dir":"`+dir+`","every":0,"keep":1,"files":true,"storage":true}`, 200)
+	folderCall(t, a, token, "POST", "/api/admin/backups", `{}`, 202)
+	waitForBackup(t, a)
+	a.stores.mu.Lock()
+	a.stores.locations[id].online = false
+	a.stores.mu.Unlock()
+	time.Sleep(1100 * time.Millisecond)
+	folderCall(t, a, token, "POST", "/api/admin/backups", `{}`, 202)
+	waitForBackup(t, a)
+	list := listBackups(dir, a.installID())
+	if len(list) != 2 || list[0].Complete || !list[1].Complete {
+		t.Fatal("the last complete backup was not kept", list)
+	}
+	if _, e := os.Stat(filepath.Join(dir, foreign)); e != nil {
+		t.Fatal("another installation's backup was removed")
+	}
+	var state struct {
+		Backups []BackupFile `json:"backups"`
+	}
+	json.Unmarshal(call(a, "GET", "/api/admin/backups", "", token).Body.Bytes(), &state)
+	for _, b := range state.Backups {
+		if b.Name == foreign {
+			t.Fatal("another installation's backup was listed")
+		}
+	}
+	if w := call(a, "GET", "/api/admin/backups/"+foreign, "", token); w.Code != 404 {
+		t.Fatal("another installation's backup could be downloaded", w.Code)
 	}
 }

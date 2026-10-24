@@ -197,3 +197,53 @@ func TestMoveAndBackDuringBackupKeepsTheFile(t *testing.T) {
 		t.Fatal("the copy left on the other location was kept", e)
 	}
 }
+
+// A token upload past the quota is refused before anything is written, and
+// reservations are given back.
+func TestTokenUploadReservesBeforeWriting(t *testing.T) {
+	a, _ := emailAdmin(t)
+	_, e := a.addUser("small", testPassword, "user", 4)
+	if e != nil {
+		t.Fatal(e)
+	}
+	token := decodeObject(t, call(a, "POST", "/api/account/tokens", `{"name":"x"}`, login(t, a, "small")))["token"].(string)
+	if w := tokenUpload(a, token, "", map[string]string{"big.txt": "more than four bytes"}); w.Code != 413 && w.Code != 507 {
+		t.Fatal("over quota accepted", w.Code, w.Body)
+	}
+	if w := tokenUpload(a, token, "", map[string]string{"ok.txt": "fit"}); w.Code != 201 {
+		t.Fatal(w.Code, w.Body)
+	}
+	if a.tokenUploads.total != 0 || len(a.tokenUploads.user) != 0 {
+		t.Fatal("a reservation was not given back", a.tokenUploads.total, a.tokenUploads.user)
+	}
+	entries, _ := os.ReadDir(filepath.Join(a.root, "blobs"))
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), partialUploadTo) {
+			t.Fatal("a refused upload left a file", entry.Name())
+		}
+	}
+}
+
+// The files a ZIP is being unpacked into cannot be written, discarded or
+// listed as an unfinished upload until the extraction is done.
+func TestExtractionFilesAreGuarded(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	sh := createShare(t, a, token, "", 5)
+	a.mu.Lock()
+	a.extracting[sh.ID] = true
+	a.mu.Unlock()
+	if w := chunk(a, token, sh.Files[0].ID, 0, "abc"); w.Code != 404 {
+		t.Fatal("a chunk was written into an extraction", w.Code)
+	}
+	if w := call(a, "DELETE", "/api/shares/"+sh.ID, `{}`, token); w.Code != 409 {
+		t.Fatal("an extraction was discarded", w.Code)
+	}
+	a.mu.Lock()
+	delete(a.extracting, sh.ID)
+	a.mu.Unlock()
+	if w := chunk(a, token, sh.Files[0].ID, 0, "abc"); w.Code != 200 {
+		t.Fatal("ordinary uploads stopped working", w.Code, w.Body)
+	}
+}

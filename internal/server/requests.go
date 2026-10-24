@@ -110,14 +110,35 @@ func requestForVisitor(q UploadRequest) UploadRequest {
 // storageRoom checks the owner's quota, the storage budget and free disk
 // space for size more bytes. Caller holds mu.
 func (a *App) storageRoom(w http.ResponseWriter, owner string, size int64) bool {
-	var quota, used, all, reserved int64
+	if !a.quotaRoom(w, owner, size) {
+		return false
+	}
+	var reserved int64
+	free, e := a.diskFree()
+	if internal(w, e) {
+		return false
+	}
+	if internal(w, a.db.QueryRow("SELECT COALESCE(SUM(size-offset),0) FROM files").Scan(&reserved)) {
+		return false
+	}
+	if size+reserved+a.tokenUploads.total > free-(512<<20) {
+		fail(w, 507, "request_full")
+		return false
+	}
+	return true
+}
+
+// quotaRoom checks size against the owner's quota and the storage budget,
+// counting what token uploads have reserved. Caller holds mu.
+func (a *App) quotaRoom(w http.ResponseWriter, owner string, size int64) bool {
+	var quota, used, all int64
 	if internal(w, a.db.QueryRow("SELECT quota FROM users WHERE id=?", owner).Scan(&quota)) {
 		return false
 	}
 	if internal(w, a.db.QueryRow("SELECT COALESCE(SUM(c.size),0) FROM storage_charges c JOIN files f ON f.id=c.file_id JOIN shares s ON s.id=f.share_id WHERE s.owner=?", owner).Scan(&used)) {
 		return false
 	}
-	if size > quota-used {
+	if size > quota-used-a.tokenUploads.user[owner] {
 		fail(w, 413, "request_full")
 		return false
 	}
@@ -128,14 +149,7 @@ func (a *App) storageRoom(w http.ResponseWriter, owner string, size int64) bool 
 	if internal(w, e) {
 		return false
 	}
-	free, e := a.diskFree()
-	if internal(w, e) {
-		return false
-	}
-	if internal(w, a.db.QueryRow("SELECT COALESCE(SUM(size-offset),0) FROM files").Scan(&reserved)) {
-		return false
-	}
-	if size > budget-all || size+reserved > free-(512<<20) {
+	if size > budget-all-a.tokenUploads.total {
 		fail(w, 507, "request_full")
 		return false
 	}

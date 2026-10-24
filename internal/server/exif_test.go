@@ -137,3 +137,59 @@ func TestSendLinksScrubPhotosWhenAsked(t *testing.T) {
 		t.Fatal("photo changed without being asked")
 	}
 }
+
+// A TIFF larger than the scan window, with its directory at the end (as
+// libtiff writes it), still loses its location.
+func TestScrubLargeTIFFWithDirectoryAtTheEnd(t *testing.T) {
+	const at = 9 << 20
+	file := make([]byte, at+160)
+	copy(file[at:], exifBlock())
+	le := binary.LittleEndian
+	copy(file, "II*\x00")
+	le.PutUint32(file[4:], at+8)
+	for _, entry := range []int{10, 22, 34, 58, 94} {
+		le.PutUint32(file[at+entry+8:], le.Uint32(file[at+entry+8:])+at)
+	}
+	path := filepath.Join(t.TempDir(), "scan.tif")
+	os.WriteFile(path, file, 0600)
+	if changed, e := scrubLocation(path); e != nil || !changed {
+		t.Fatal(changed, e)
+	}
+	got, _ := os.ReadFile(path)
+	if len(got) != len(file) || !bytes.Equal(got[at+110:at+134], make([]byte, 24)) {
+		t.Fatal("the latitude is still there")
+	}
+}
+
+// Compressed XMP in a PNG is replaced by an empty comment, and the picture
+// still decodes.
+func TestScrubCompressedPNGMetadata(t *testing.T) {
+	var plain bytes.Buffer
+	if e := png.Encode(&plain, image.NewRGBA(image.Rect(0, 0, 4, 4))); e != nil {
+		t.Fatal(e)
+	}
+	chunk := func(kind string, data []byte) []byte {
+		out := binary.BigEndian.AppendUint32(nil, uint32(len(data)))
+		out = append(out, kind...)
+		out = append(out, data...)
+		crc := crc32.NewIEEE()
+		crc.Write([]byte(kind))
+		crc.Write(data)
+		return binary.BigEndian.AppendUint32(out, crc.Sum32())
+	}
+	source := plain.Bytes()
+	xmp := append([]byte("XML:com.adobe.xmp\x00\x00"), bytes.Repeat([]byte{0x78, 0x9c, 0x01}, 20)...)
+	file := append(append(append([]byte{}, source[:33]...), chunk("zTXt", xmp)...), source[33:]...)
+	path := filepath.Join(t.TempDir(), "photo.png")
+	os.WriteFile(path, file, 0600)
+	if changed, e := scrubLocation(path); e != nil || !changed {
+		t.Fatal(changed, e)
+	}
+	got, _ := os.ReadFile(path)
+	if bytes.Contains(got, []byte("zTXt")) || !bytes.Contains(got, []byte("tEXtComment\x00")) || len(got) != len(file) {
+		t.Fatal("the compressed metadata is still there")
+	}
+	if _, e := png.Decode(bytes.NewReader(got)); e != nil {
+		t.Fatal("the picture no longer decodes", e)
+	}
+}

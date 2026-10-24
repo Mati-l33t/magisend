@@ -30,7 +30,11 @@ const (
 	maxBackupsKept = 100
 )
 
-var backupName = regexp.MustCompile(`^magisend-backup-\d{8}-\d{6}\.tar$`)
+// magisend-backup-<installation>-<time>[-incomplete].tar; archives from
+// before 1.0.6 have no installation part.
+var backupName = regexp.MustCompile(`^magisend-backup-(?:([0-9a-f]{8})-)?\d{8}-\d{6}(-incomplete)?\.tar$`)
+
+const backupStall = 10 * time.Minute
 
 func migrateBackup(db *sql.DB) error {
 	// Backups that included files used to include every storage location;
@@ -48,6 +52,7 @@ func migrateBackup(db *sql.DB) error {
 		{"backup_error", "TEXT NOT NULL DEFAULT ''"},
 		{"backup_warning", "TEXT NOT NULL DEFAULT ''"},
 		{"backup_storage", "INTEGER NOT NULL DEFAULT 0"},
+		{"install_id", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if e := addColumn(db, "settings", c[0], c[1]); e != nil {
 			return e
@@ -58,7 +63,8 @@ func migrateBackup(db *sql.DB) error {
 			return e
 		}
 	}
-	return nil
+	_, e := db.Exec("UPDATE settings SET install_id=? WHERE id=1 AND install_id=''", randomID()[:8])
+	return e
 }
 
 type BackupSettings struct {
@@ -79,12 +85,19 @@ type backupState struct {
 	// Stored files deleted while a backup runs, removed once it is done, so
 	// the backup's database copy never refers to a file its archive lacks.
 	held []string
+	// Which run is current, and when it last made progress: a run stuck on a
+	// share that stopped answering is given up after backupStall.
+	generation int
+	progressAt time.Time
 }
 
 type BackupFile struct {
-	Name    string `json:"name"`
-	Size    int64  `json:"size"`
-	Created int64  `json:"created"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Created  int64  `json:"created"`
+	Complete bool   `json:"complete"`
+	// Made by this installation (or before archives carried its ID).
+	own bool
 }
 
 func (a *App) backupSettings() (BackupSettings, int64, string, error) {
@@ -102,22 +115,65 @@ func (a *App) backupDir(s BackupSettings) string {
 	return s.Dir
 }
 
-// listBackups returns the backups in the folder, newest first.
-func listBackups(dir string) []BackupFile {
+// installID names this installation's backups, so a shared backup folder
+// is never pruned or listed across installations.
+func (a *App) installID() string {
+	var id string
+	_ = a.db.QueryRow("SELECT install_id FROM settings WHERE id=1").Scan(&id)
+	return id
+}
+
+// listBackups returns this installation's backups in the folder, newest
+// first (archives from before installation IDs count as its own).
+func listBackups(dir, install string) []BackupFile {
 	entries, _ := os.ReadDir(dir)
 	list := []BackupFile{}
 	for _, entry := range entries {
 		info, e := entry.Info()
-		if e != nil || !info.Mode().IsRegular() || !backupName.MatchString(entry.Name()) {
+		if e != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		list = append(list, BackupFile{entry.Name(), info.Size(), info.ModTime().Unix()})
+		m := backupName.FindStringSubmatch(entry.Name())
+		if m == nil || m[1] != "" && m[1] != install {
+			continue
+		}
+		list = append(list, BackupFile{Name: entry.Name(), Size: info.Size(), Created: info.ModTime().Unix(), Complete: m[2] == "", own: m[1] == install})
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Name > list[j].Name })
+	sort.Slice(list, func(i, j int) bool { return list[i].Created > list[j].Created })
 	return list
 }
 
-// startBackup runs one backup in the background unless one is running.
+// pruneBackups keeps the newest keep of this installation's archives, and
+// always the newest complete one.
+func pruneBackups(dir, install string, keep int) {
+	keptComplete := false
+	for i, b := range listBackups(dir, install) {
+		if !b.own {
+			continue
+		}
+		if i < max(1, keep) || b.Complete && !keptComplete {
+			keptComplete = keptComplete || b.Complete
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, b.Name))
+	}
+}
+
+// cleanBackupLeftovers removes what an interrupted backup of this
+// installation left in the folder.
+func cleanBackupLeftovers(dir, install string) {
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".magisend-snapshot-"+install+"-") || strings.HasPrefix(name, "."+backupPrefix+install+"-") && strings.HasSuffix(name, ".partial") {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
+}
+
+// startBackup runs one backup in the background unless one is running. A
+// watchdog gives a run up when it makes no progress for backupStall (a share
+// that stopped answering), so deletions held for it are not held forever.
 func (a *App) startBackup(now time.Time) bool {
 	a.backup.Lock()
 	if a.backup.running {
@@ -125,9 +181,28 @@ func (a *App) startBackup(now time.Time) bool {
 		return false
 	}
 	a.backup.running, a.backup.done, a.backup.total = true, 0, 0
+	a.backup.generation++
+	run := a.backup.generation
+	a.backup.progressAt = time.Now()
 	a.backup.Unlock()
+	finished := make(chan struct{})
+	record := func(failure, warning string) bool {
+		a.backup.Lock()
+		current := a.backup.generation == run && a.backup.running
+		if current {
+			a.backup.generation++
+		}
+		a.backup.Unlock()
+		if !current {
+			return false
+		}
+		_, _ = a.db.Exec("UPDATE settings SET backup_last=?, backup_error=?, backup_warning=? WHERE id=1", now.Unix(), failure, warning)
+		a.finishBackup()
+		return true
+	}
 	go func() {
 		missing, e := a.makeBackup(now)
+		close(finished)
 		failure, warning := "", ""
 		if e != nil {
 			failure = e.Error()
@@ -136,13 +211,29 @@ func (a *App) startBackup(now time.Time) bool {
 			warning = missingSummary(missing)
 			log.Printf("backup incomplete: %s", warning)
 		}
-		_, _ = a.db.Exec("UPDATE settings SET backup_last=?, backup_error=?, backup_warning=? WHERE id=1", now.Unix(), failure, warning)
-		a.finishBackup()
+		record(failure, warning)
+	}()
+	go func() {
+		ticker := time.NewTicker(backupStall / 10)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-finished:
+				return
+			case <-ticker.C:
+				a.backup.Lock()
+				stalled := a.backup.generation == run && time.Since(a.backup.progressAt) > backupStall
+				a.backup.Unlock()
+				if stalled && record("a storage folder stopped answering during the backup", "") {
+					log.Print("backup given up: no progress")
+					return
+				}
+			}
+		}
 	}()
 	return true
 }
 
-// dueBackup starts a scheduled backup when its time has come.
 func (a *App) dueBackup(now time.Time) {
 	s, last, _, e := a.backupSettings()
 	if e == nil && s.Every > 0 && now.Sub(time.Unix(last, 0)) >= time.Duration(s.Every)*time.Hour {
@@ -165,6 +256,12 @@ To restore:
    files/<location>/* into that location's magisend-files folder.
 4. Start MagiSend again.
 
+Files of an added storage location are under files/<location ID>/; LOCATIONS.txt
+lists each ID and the folder it was added as. When you restore them to a new disk
+or share, put them in its magisend-files folder together with a file named
+.magisend-storage that contains just that location ID, then mount it at the same
+path, so MagiSend recognises the location again.
+
 Files in the storage folders that the restored database does not know (made after
 this backup) are not deleted: MagiSend sets them aside and lists them under
 Administration → Storage, where they can be put back into the library.
@@ -179,16 +276,30 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 	if e = os.MkdirAll(dir, 0700); e != nil {
 		return nil, errors.New("the backup folder cannot be created")
 	}
-	// SQLite writes a consistent copy while the app keeps working.
-	snapshot := filepath.Join(dir, ".magisend-snapshot-"+randomID()+".sqlite")
+	install := a.installID()
+	cleanBackupLeftovers(dir, install)
+	// SQLite writes a consistent copy while the app keeps working; it holds
+	// password hashes and secrets, so only its owner may read it.
+	snapshot := filepath.Join(dir, ".magisend-snapshot-"+install+"-"+randomID()+".sqlite")
 	defer os.Remove(snapshot)
 	if _, e = a.db.Exec("VACUUM INTO ?", snapshot); e != nil {
+		return nil, errors.New("the database could not be copied")
+	}
+	if e = os.Chmod(snapshot, 0600); e != nil {
 		return nil, errors.New("the database could not be copied")
 	}
 	// What could not be copied; the backup is then incomplete, and says so.
 	var missing []string
 	type item struct{ name, path string }
 	items := []item{{"magisend.sqlite", snapshot}}
+	// Each added location's marker and path, so a restored folder can be
+	// attached again (see RESTORE.txt).
+	var locations strings.Builder
+	a.stores.mu.RLock()
+	for id, l := range a.stores.locations {
+		fmt.Fprintf(&locations, "%s  %s\n", id, l.Path)
+	}
+	a.stores.mu.RUnlock()
 	if s.Files {
 		locations := []string{localLocation}
 		if s.Storage {
@@ -229,8 +340,8 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 	a.backup.total = total
 	a.backup.Unlock()
 
-	name := backupPrefix + now.UTC().Format("20060102-150405") + ".tar"
-	partial := filepath.Join(dir, "."+name+".partial")
+	stamp := backupPrefix + install + "-" + now.UTC().Format("20060102-150405")
+	partial := filepath.Join(dir, "."+stamp+".partial")
 	out, e := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
 	if e != nil {
 		return nil, errors.New("the backup file cannot be written")
@@ -248,6 +359,15 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 	}
 	if _, e = io.WriteString(archive, restoreGuide); e != nil {
 		return nil, e
+	}
+	if locations.Len() > 0 {
+		list := "Storage locations: ID, then the folder it was added as.\n\n" + locations.String()
+		if e = archive.WriteHeader(&tar.Header{Name: "LOCATIONS.txt", Mode: 0600, Size: int64(len(list)), ModTime: now, Format: tar.FormatPAX}); e != nil {
+			return nil, e
+		}
+		if _, e = io.WriteString(archive, list); e != nil {
+			return nil, e
+		}
 	}
 	for _, it := range items {
 		copied, e := a.addToBackup(archive, it.name, it.path)
@@ -276,20 +396,22 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 	if e != nil {
 		return nil, errors.New("the backup file cannot be written")
 	}
+	name := stamp + ".tar"
+	if len(missing) > 0 {
+		name = stamp + "-incomplete.tar"
+	}
 	if e = os.Rename(partial, filepath.Join(dir, name)); e != nil {
 		return nil, errors.New("the backup file cannot be written")
 	}
 	done = true
-	// Only the newest are kept.
-	for i, old := range listBackups(dir) {
-		if i >= max(1, s.Keep) {
-			_ = os.Remove(filepath.Join(dir, old.Name))
-		}
-	}
+	pruneBackups(dir, install, s.Keep)
 	return missing, nil
 }
 
-// addToBackup copies one file and reports whether it could be read.
+// addToBackup copies one file and reports whether it could be read whole.
+// A read that fails partway (a bad sector, a share that dropped) fills the
+// rest with zeros, so the archive stays valid; only writing the archive can
+// fail the backup.
 func (a *App) addToBackup(archive *tar.Writer, name, path string) (bool, error) {
 	file, e := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if e != nil {
@@ -300,14 +422,32 @@ func (a *App) addToBackup(archive *tar.Writer, name, path string) (bool, error) 
 	if e != nil || !info.Mode().IsRegular() {
 		return false, nil
 	}
-	if e = archive.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: info.Size(), ModTime: info.ModTime(), Format: tar.FormatPAX}); e != nil {
+	size := info.Size()
+	if e = archive.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: size, ModTime: info.ModTime(), Format: tar.FormatPAX}); e != nil {
 		return false, e
 	}
-	// Exactly the size recorded, even if an upload is still adding to it.
-	if _, e = io.CopyN(archive, &progress{file, a}, info.Size()); e != nil {
-		return false, e
+	buf := make([]byte, 256<<10)
+	whole := true
+	for written := int64(0); written < size; {
+		n := int(min(int64(len(buf)), size-written))
+		got := 0
+		if whole {
+			got, e = io.ReadFull(file, buf[:n])
+			if e != nil {
+				whole = false
+			}
+		}
+		clear(buf[got:n])
+		if _, e = archive.Write(buf[:n]); e != nil {
+			return false, e
+		}
+		written += int64(n)
+		a.backup.Lock()
+		a.backup.done += int64(n)
+		a.backup.progressAt = time.Now()
+		a.backup.Unlock()
 	}
-	return true, nil
+	return whole, nil
 }
 
 // discardStored deletes a stored file, or, while a backup runs, once it is
@@ -429,19 +569,6 @@ func (a *App) locationLabel(loc string) string {
 	return loc
 }
 
-type progress struct {
-	r io.Reader
-	a *App
-}
-
-func (p *progress) Read(b []byte) (int, error) {
-	n, e := p.r.Read(b)
-	p.a.backup.Lock()
-	p.a.backup.done += int64(n)
-	p.a.backup.Unlock()
-	return n, e
-}
-
 // validBackupDir accepts an absolute folder that exists or can be made.
 func validBackupDir(dir string) (string, bool) {
 	dir = strings.TrimSpace(dir)
@@ -482,7 +609,7 @@ func (a *App) backupRoutes(m *http.ServeMux) {
 		if internal(w, e) {
 			return
 		}
-		respond(w, 200, map[string]any{"settings": s, "folder": a.backupDir(s), "last": last, "error": failure, "warning": warning, "state": state, "sizes": sizes, "backups": listBackups(a.backupDir(s))})
+		respond(w, 200, map[string]any{"settings": s, "folder": a.backupDir(s), "last": last, "error": failure, "warning": warning, "state": state, "sizes": sizes, "backups": listBackups(a.backupDir(s), a.installID())})
 	})
 	m.HandleFunc("PUT /api/admin/backups", func(w http.ResponseWriter, r *http.Request) {
 		var b BackupSettings
@@ -527,7 +654,7 @@ func (a *App) backupRoutes(m *http.ServeMux) {
 		if internal(w, e) {
 			return
 		}
-		if !backupName.MatchString(name) {
+		if m := backupName.FindStringSubmatch(name); m == nil || m[1] != "" && m[1] != a.installID() {
 			fail(w, 404, "not_found")
 			return
 		}
@@ -555,7 +682,7 @@ func (a *App) backupRoutes(m *http.ServeMux) {
 		if internal(w, e) {
 			return
 		}
-		if !backupName.MatchString(name) {
+		if m := backupName.FindStringSubmatch(name); m == nil || m[1] != "" && m[1] != a.installID() {
 			fail(w, 404, "not_found")
 			return
 		}

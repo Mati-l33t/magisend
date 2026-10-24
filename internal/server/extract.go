@@ -2,6 +2,7 @@ package server
 
 import (
 	"archive/zip"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -101,6 +102,9 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 		if ok {
 			plan, ok = a.planExtraction(w, u, f, reader)
 		}
+		if ok {
+			a.extracting[plan.share] = true
+		}
 		a.mu.Unlock()
 		if !ok {
 			return
@@ -108,6 +112,7 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 		e := plan.write()
 		a.mu.Lock()
 		defer a.mu.Unlock()
+		delete(a.extracting, plan.share)
 		if e == nil {
 			e = plan.finish(a)
 		}
@@ -324,10 +329,21 @@ func writeEntry(entry zipEntry) error {
 	return e
 }
 
-// finish marks the files complete and shows them. Caller holds mu.
+// finish checks every unpacked file on disk, then marks them complete and
+// shows them. Caller holds mu.
 func (plan *extraction) finish(a *App) error {
-	if e := exec(a, "UPDATE files SET offset=size WHERE share_id=?", plan.share); e != nil {
+	for _, entry := range plan.entries {
+		info, e := os.Lstat(entry.path)
+		if e != nil || !info.Mode().IsRegular() || info.Size() != int64(entry.file.UncompressedSize64) {
+			return errors.New("an unpacked file is missing or has the wrong size")
+		}
+	}
+	res, e := a.db.Exec("UPDATE files SET offset=size WHERE share_id=?", plan.share)
+	if e != nil {
 		return e
+	}
+	if n, e := res.RowsAffected(); e != nil || n != int64(len(plan.entries)) {
+		return errors.New("the unpacked files changed while they were written")
 	}
 	return exec(a, "UPDATE shares SET published=1 WHERE id=?", plan.share)
 }

@@ -101,9 +101,18 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 		if internal(w, e) {
 			return
 		}
-		if current >= textMaxVersions {
+		if count, e := a.versionCount(f.ID); internal(w, e) {
+			return
+		} else if count >= textMaxVersions {
 			fail(w, 429, "metadata_limit")
 			return
+		}
+		// A link that removes photo location data must not serve a new version
+		// with it.
+		if shouldScrub(source.Name) || shouldScrub(f.Name) {
+			if e := a.scrubIfStripped(f.ShareID, source.ID, source.Backend); internal(w, e) {
+				return
+			}
 		}
 		// Links that include the file must have room for its new size; the
 		// bytes themselves are already counted, as the uploaded file.
@@ -236,6 +245,11 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 				_ = os.Remove(path)
 			}
 		}()
+		if shouldScrub(f.Name) {
+			if e := a.scrubIfStripped(f.ShareID, blob, f.Backend); internal(w, e) {
+				return
+			}
+		}
 		tx, e := a.db.Begin()
 		if internal(w, e) {
 			return

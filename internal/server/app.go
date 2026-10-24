@@ -38,6 +38,13 @@ type App struct {
 	// When a client was last counted downloading a file, so its later ranges
 	// continue that download instead of counting again.
 	resumes map[string]time.Time
+	// Library containers a ZIP is being unpacked into.
+	extracting map[string]bool
+	// Bytes reserved by token uploads in progress, in total and per owner.
+	tokenUploads struct {
+		total int64
+		user  map[string]int64
+	}
 	// Slots each client holds.
 	downloadClients, mutationClients, uploadClients clientSlots
 	mu                                              sync.Mutex
@@ -137,6 +144,8 @@ func NewApp(root, origin string) (*App, error) {
 	}
 	a := &App{db: db, root: root, publicOrigin: origin, attempts: make(map[string]attempt), mutations: make(chan struct{}, mutationSlots), uploads: make(chan struct{}, uploadSlots), downloads: make(chan struct{}, downloadSlots), thumbs: make(chan string, thumbQueueDepth), ui: webInterface(), updates: newUpdates(), mail: make(chan outgoingMail, emailQueueDepth), push: make(chan pushJob, emailQueueDepth), sendMail: sendSMTP, indexSums: map[string][32]byte{}, resumes: map[string]time.Time{}}
 	a.downloadClients.count = map[string]int{}
+	a.tokenUploads.user = map[string]int64{}
+	a.extracting = map[string]bool{}
 	a.mutationClients.count = map[string]int{}
 	a.uploadClients.count = map[string]int{}
 	go a.thumbnailWorker()
