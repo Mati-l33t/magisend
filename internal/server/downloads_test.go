@@ -157,7 +157,7 @@ func TestZipSkipsUsedUpFilesAndCountsEach(t *testing.T) {
 func TestClosingLinkNotifiesAtOnce(t *testing.T) {
 	a, admin := emailAdmin(t)
 	configureEmail(t, a, admin)
-	call(a, "PUT", "/api/account/email", `{"email":"mati@example.com"}`, admin)
+	call(a, "PUT", "/api/account/email", `{"email":"mati@example.com","password":"correct horse battery staple"}`, admin)
 	sh := limitedShare(t, a, admin, 1)
 	if w := call(a, "PUT", "/api/shares/"+sh.ID+"/notify", `{"enabled":true}`, admin); w.Code != 200 {
 		t.Fatal(w.Code, w.Body)

@@ -3,11 +3,13 @@ package server
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // Links people create. Library uploads are stored as hidden containers and
@@ -43,12 +45,32 @@ func acquire(w http.ResponseWriter, slots chan struct{}) bool {
 }
 
 const (
-	// Downloads, previews, media and thumbnails share these slots. One visitor
-	// gets at most as many as a browser opens to one site, so a few slow or
-	// hostile connections cannot take them all.
+	// Downloads, previews, media and thumbnails share these slots; other
+	// writes and uploads have their own. One visitor gets only a few of each,
+	// so a few slow or hostile connections cannot take them all.
 	downloadSlots      = 32
 	downloadsPerClient = 6
+	mutationSlots      = 32
+	mutationsPerClient = 6
+	uploadSlots        = 16
+	uploadsPerClient   = 4
+	// The largest request body that is not a file stream (a profile picture).
+	maxBufferedBody = 4<<20 + 512<<10
 )
+
+type clientSlots struct {
+	sync.Mutex
+	count map[string]int
+}
+
+// streamingRequest tells file uploads, which are read as they arrive and
+// outside mu, from every other request, which is read whole first.
+func streamingRequest(r *http.Request) bool {
+	path := r.URL.Path
+	return path == uploadEndpoint ||
+		r.Method == "PATCH" && (strings.HasPrefix(path, "/api/uploads/") || strings.HasPrefix(path, "/api/requests/") && strings.Contains(path, "/files/")) ||
+		r.Method == "POST" && strings.HasPrefix(path, "/api/public/") && strings.HasSuffix(path, "/files")
+}
 
 // slotClient groups IPv6 clients by /56, what a home connection usually gets,
 // so one household cannot hold the slots of many /64 networks.
@@ -64,32 +86,38 @@ func slotClient(client string) string {
 	return ip.Mask(net.CIDRMask(56, 128)).String() + "/56"
 }
 
-// acquireDownload takes a download slot for this request's client.
-func (a *App) acquireDownload(w http.ResponseWriter, r *http.Request) (func(), bool) {
+// acquireFor takes one of slots for this request's client, at most
+// perClient at a time.
+func (a *App) acquireFor(w http.ResponseWriter, r *http.Request, slots chan struct{}, clients *clientSlots, perClient int) (func(), bool) {
 	client := slotClient(a.clientIP(r))
-	a.downloadClients.Lock()
-	if a.downloadClients.count[client] >= downloadsPerClient {
-		a.downloadClients.Unlock()
+	clients.Lock()
+	if clients.count[client] >= perClient {
+		clients.Unlock()
 		fail(w, 429, "För många samtidiga förfrågningar")
 		return nil, false
 	}
-	a.downloadClients.count[client]++
-	a.downloadClients.Unlock()
+	clients.count[client]++
+	clients.Unlock()
 	release := func() {
-		a.downloadClients.Lock()
-		if a.downloadClients.count[client]--; a.downloadClients.count[client] <= 0 {
-			delete(a.downloadClients.count, client)
+		clients.Lock()
+		if clients.count[client]--; clients.count[client] <= 0 {
+			delete(clients.count, client)
 		}
-		a.downloadClients.Unlock()
+		clients.Unlock()
 	}
-	if !acquire(w, a.downloads) {
+	if !acquire(w, slots) {
 		release()
 		return nil, false
 	}
 	return func() {
-		<-a.downloads
+		<-slots
 		release()
 	}, true
+}
+
+// acquireDownload takes a download slot for this request's client.
+func (a *App) acquireDownload(w http.ResponseWriter, r *http.Request) (func(), bool) {
+	return a.acquireFor(w, r, a.downloads, &a.downloadClients, downloadsPerClient)
 }
 
 // Query errors hide a share rather than making deletion fail open.
@@ -102,44 +130,90 @@ func (a *App) isDeleting(id string) bool {
 // Deleting rows may already have lost blobs; main's existing startup cleanup
 // retries them. Other committed bytes must exist before accepting requests.
 func (a *App) verifyCommittedStorage() error {
-	rows, e := a.db.Query(`SELECT f.id,f.offset,f.size,f.backend,s.published,COALESCE((SELECT v.blob FROM text_versions v WHERE v.file_id=f.id ORDER BY v.number DESC LIMIT 1),f.id) FROM files f JOIN shares s ON s.id=f.share_id WHERE NOT EXISTS (SELECT 1 FROM deleting d WHERE d.share_id=s.id) AND NOT EXISTS(SELECT 1 FROM file_deleting d WHERE d.file_id=f.id)`)
+	missing, wrong, e := a.checkStoredFiles()
 	if e != nil {
 		return e
 	}
+	if len(wrong) > 0 {
+		return fmt.Errorf("none of the expected files are in %s and it has no MagiSend index: is the right disk or share mounted?", strings.Join(wrong, ", "))
+	}
+	if len(missing) > 0 {
+		log.Printf("storage: %d stored files are missing or damaged; see Administration → Storage", len(missing))
+	}
+	return nil
+}
+
+// MissingFile is a file whose stored data is gone or has the wrong size,
+// for example after an older database was restored.
+type MissingFile struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Owner    string `json:"owner"`
+	Size     int64  `json:"size"`
+	Location string `json:"location"`
+	Library  bool   `json:"library"`
+}
+
+// checkStoredFiles compares every committed file with its stored data in
+// the reachable locations (offline ones are checked when read). wrong lists
+// locations where none of many expected files exist and MagiSend's index is
+// missing too, which looks like an unmounted disk rather than lost files.
+func (a *App) checkStoredFiles() (missing []MissingFile, wrong []string, err error) {
+	rows, e := a.db.Query(`SELECT f.id,f.name,COALESCE(u.username,''),f.offset,f.size,f.backend,s.published,EXISTS(SELECT 1 FROM library_files l WHERE l.file_id=f.id),
+ COALESCE((SELECT v.blob FROM text_versions v WHERE v.file_id=f.id ORDER BY v.number DESC LIMIT 1),f.id)
+ FROM files f JOIN shares s ON s.id=f.share_id LEFT JOIN users u ON u.id=s.owner
+ WHERE NOT EXISTS (SELECT 1 FROM deleting d WHERE d.share_id=s.id) AND NOT EXISTS(SELECT 1 FROM file_deleting d WHERE d.file_id=f.id)`)
+	if e != nil {
+		return nil, nil, e
+	}
 	defer rows.Close()
+	expected, found := map[string]int{}, map[string]int{}
 	for rows.Next() {
-		var id, backend, blob string
-		var offset, size int64
+		var f MissingFile
+		var blob string
+		var offset int64
 		var published bool
-		if e = rows.Scan(&id, &offset, &size, &backend, &published, &blob); e != nil {
-			return e
+		if e = rows.Scan(&f.ID, &f.Name, &f.Owner, &offset, &f.Size, &f.Location, &published, &f.Library, &blob); e != nil {
+			return nil, nil, e
 		}
-		if !a.knownLocation(backend) || offset < 0 || offset > size {
-			return fmt.Errorf("invalid committed storage metadata for %s", id)
+		if !a.knownLocation(f.Location) || offset < 0 || offset > f.Size {
+			return nil, nil, fmt.Errorf("invalid committed storage metadata for %s", f.ID)
 		}
 		if offset == 0 && !published {
 			continue
 		}
 		if !validToken(blob) {
-			return fmt.Errorf("invalid committed blob key")
+			return nil, nil, fmt.Errorf("invalid committed blob key")
 		}
-		// Files on an offline location are checked when they are read.
-		dir, e := a.blobDir(backend)
+		dir, e := a.blobDir(f.Location)
 		if errors.Is(e, errStorageOffline) {
 			continue
 		}
 		if e != nil {
-			return e
+			return nil, nil, e
 		}
+		expected[f.Location]++
 		info, e := os.Lstat(filepath.Join(dir, blob))
-		if e != nil {
-			return fmt.Errorf("committed blob %s unavailable: %w", id, e)
+		if e == nil {
+			found[f.Location]++
 		}
-		if !info.Mode().IsRegular() || info.Size() < offset || (published && (offset != size || info.Size() != size)) {
-			return fmt.Errorf("committed blob %s invalid", id)
+		if e != nil || !info.Mode().IsRegular() || info.Size() < offset || (published && (offset != f.Size || info.Size() != f.Size)) {
+			missing = append(missing, f)
 		}
 	}
-	return rows.Err()
+	if e = rows.Err(); e != nil {
+		return nil, nil, e
+	}
+	for loc, n := range expected {
+		if found[loc] > 0 || n < 3 {
+			continue
+		}
+		dir, _ := a.blobDir(loc)
+		if _, e := os.Lstat(filepath.Join(dir, storageIndexFile)); e != nil {
+			wrong = append(wrong, a.locationLabel(loc))
+		}
+	}
+	return missing, wrong, nil
 }
 
 // metadataRoom reports whether owner may add one more link (when link is

@@ -467,6 +467,47 @@ func (a *App) unclaimedRoutes(m *http.ServeMux) {
 		_ = a.writeStorageIndexes(time.Now())
 		respond(w, 200, map[string]int{"restored": restored, "failed": failed})
 	})
+	// Files the database has whose stored data is gone (after an older backup
+	// was restored, say): listed so the administrator can remove them.
+	m.HandleFunc("GET /api/admin/storage/missing", func(w http.ResponseWriter, r *http.Request) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if _, ok := a.require(w, r, true); !ok {
+			return
+		}
+		missing, _, e := a.checkStoredFiles()
+		if internal(w, e) {
+			return
+		}
+		if missing == nil {
+			missing = []MissingFile{}
+		}
+		shown := missing
+		if len(shown) > maxUnclaimedList {
+			shown = shown[:maxUnclaimedList]
+		}
+		respond(w, 200, map[string]any{"count": len(missing), "files": shown})
+	})
+	m.HandleFunc("DELETE /api/admin/storage/missing", func(w http.ResponseWriter, r *http.Request) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		admin, ok := a.require(w, r, true)
+		if !ok {
+			return
+		}
+		missing, _, e := a.checkStoredFiles()
+		if internal(w, e) {
+			return
+		}
+		removed := 0
+		for _, f := range missing {
+			if f.Library && a.removeLibraryFile(f.ID) == nil {
+				removed++
+			}
+		}
+		a.audit(r, admin.Username, "storage.missing_removed", fmt.Sprint(removed))
+		respond(w, 200, map[string]int{"removed": removed})
+	})
 	m.HandleFunc("DELETE /api/admin/storage/unclaimed", func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		defer a.mu.Unlock()

@@ -123,8 +123,8 @@ func textConflict(w http.ResponseWriter) {
 // New bytes are durable before the atomic history+pointer commit. A failed
 // commit never changes the readable current blob. Unreferenced random blobs can
 // be safely collected at startup/cleanup without touching committed history.
-func (a *App) saveText(w http.ResponseWriter, f File, user string, current int, data []byte) bool {
-	version, ok := a.storeText(w, f, user, current, data)
+func (a *App) saveText(w http.ResponseWriter, f File, user string, current int, data []byte, merge ...bool) bool {
+	version, ok := a.storeText(w, f, user, current, data, merge...)
 	if ok {
 		respond(w, 200, map[string]any{"text": string(data), "version": version})
 	}
@@ -135,7 +135,9 @@ func (a *App) saveText(w http.ResponseWriter, f File, user string, current int, 
 // version is the same person's from the last few minutes, the new one takes
 // its place in the history; the number still goes up, so anyone editing the
 // older text still gets a conflict.
-func (a *App) storeText(w http.ResponseWriter, f File, user string, current int, data []byte) (int, bool) {
+func (a *App) storeText(w http.ResponseWriter, f File, user string, current int, data []byte, merge ...bool) (int, bool) {
+	// A restore never merges: it must not replace the version it restores over.
+	mayMerge := len(merge) == 0 || merge[0]
 	fail := func() (int, bool) { return 0, false }
 	if !safeText(f.Name, data) {
 		textUnsupported(w)
@@ -152,7 +154,7 @@ func (a *App) storeText(w http.ResponseWriter, f File, user string, current int,
 	if internal(w, a.db.QueryRow("SELECT COUNT(*) FROM text_versions WHERE file_id=?", f.ID).Scan(&count)) {
 		return fail()
 	}
-	if current > 1 && a.db.QueryRow("SELECT actor,created,blob FROM text_versions WHERE file_id=? AND number=?", f.ID, current).Scan(&newestActor, &newestAt, &replacedBlob) == nil &&
+	if mayMerge && current > 1 && a.db.QueryRow("SELECT actor,created,blob FROM text_versions WHERE file_id=? AND number=?", f.ID, current).Scan(&newestActor, &newestAt, &replacedBlob) == nil &&
 		newestActor == user && time.Since(time.Unix(newestAt, 0)) < textMergeWindow && replacedBlob != f.ID && validToken(replacedBlob) {
 		replaced = replacedBlob
 		count--
@@ -424,5 +426,5 @@ func (a *App) serveText(w http.ResponseWriter, r *http.Request, f File, user str
 	} else {
 		data = []byte(b.Text)
 	}
-	a.saveText(w, f, user, version, data)
+	a.saveText(w, f, user, version, data, b.Restore == 0)
 }

@@ -34,7 +34,7 @@ type startedUpload struct {
 func TestUploadRequestReceivesFilesIntoTheLibrary(t *testing.T) {
 	a, admin := emailAdmin(t)
 	configureEmail(t, a, admin)
-	call(a, "PUT", "/api/account/email", `{"email":"mati@example.com"}`, admin)
+	call(a, "PUT", "/api/account/email", `{"email":"mati@example.com","password":"correct horse battery staple"}`, admin)
 	folder := folderCall(t, a, admin, "POST", "/api/folders", `{"name":"Inbox"}`, 201)["id"].(string)
 	body := fmt.Sprintf(`{"title":"Tax papers","message":"Please upload your receipts","folder_id":%q,"days":7,"notify":true}`, folder)
 	q := folderCall(t, a, admin, "POST", "/api/requests", body, 201)

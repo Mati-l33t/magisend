@@ -197,6 +197,16 @@ func (a *App) twoFactorRoutes(m *http.ServeMux) {
 		secret := totpEncoding.EncodeToString(key)
 		a.mu.Lock()
 		defer a.mu.Unlock()
+		// With two-step login on, a new authenticator would replace the current
+		// one on the password alone; turning it off first needs a code.
+		var enabled bool
+		if internal(w, a.db.QueryRow("SELECT totp_enabled FROM users WHERE id=?", u.ID).Scan(&enabled)) {
+			return
+		}
+		if enabled {
+			fail(w, 409, "two_factor_on")
+			return
+		}
 		if internal(w, exec(a, "UPDATE users SET totp_pending=? WHERE id=?", secret, u.ID)) {
 			return
 		}
@@ -224,7 +234,12 @@ func (a *App) twoFactorRoutes(m *http.ServeMux) {
 			return
 		}
 		var pending string
-		if internal(w, a.db.QueryRow("SELECT totp_pending FROM users WHERE id=?", u.ID).Scan(&pending)) {
+		var enabled bool
+		if internal(w, a.db.QueryRow("SELECT totp_pending,totp_enabled FROM users WHERE id=?", u.ID).Scan(&pending, &enabled)) {
+			return
+		}
+		if enabled {
+			fail(w, 409, "two_factor_on")
 			return
 		}
 		counter, valid := totpMatch(pending, b.Code, time.Now(), 0)
@@ -271,6 +286,7 @@ func (a *App) twoFactorRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/account/2fa/recovery", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
 			Password string `json:"password"`
+			Code     string `json:"code"`
 		}
 		if !decode(w, r, &b) {
 			return
@@ -287,6 +303,12 @@ func (a *App) twoFactorRoutes(m *http.ServeMux) {
 		}
 		if !enabled {
 			fail(w, 409, "two_factor_off")
+			return
+		}
+		// New codes replace the old ones, so they need the current factor too.
+		if !a.checkSecondFactor(u.ID, b.Code) {
+			a.failed("password:" + u.ID)
+			fail(w, 400, "invalid_code")
 			return
 		}
 		codes, e := a.storeRecoveryCodes(u.ID)

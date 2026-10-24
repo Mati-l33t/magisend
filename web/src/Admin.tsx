@@ -483,7 +483,7 @@ export default function Admin({
                         {
                           label: t('admin.resetPassword'),
                           icon: <KeyRound size={15} />,
-                          disabled: busy,
+                          disabled: busy || self,
                           onSelect: () => {
                             setResetPassword('');
                             setResetting(u);
@@ -494,7 +494,7 @@ export default function Admin({
                               {
                                 label: t('twoFactor.reset'),
                                 icon: <ShieldOff size={15} />,
-                                disabled: busy,
+                                disabled: busy || self,
                                 onSelect: () => {
                                   if (
                                     window.confirm(

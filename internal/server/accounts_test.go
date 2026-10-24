@@ -98,8 +98,14 @@ func TestSecureCookiesAndHSTSForHTTPSOrigin(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body)
 	}
-	if c := w.Result().Cookies(); len(c) != 1 || !c[0].Secure {
-		t.Fatal("session cookie must be Secure behind an HTTPS origin")
+	cookies := w.Result().Cookies()
+	if len(cookies) == 0 || cookies[0].Name != "magisend_session" {
+		t.Fatal("no session cookie", cookies)
+	}
+	for _, c := range cookies {
+		if !c.Secure || !c.HttpOnly {
+			t.Fatal("cookies must be Secure and HttpOnly behind an HTTPS origin", c.Name)
+		}
 	}
 	if w.Header().Get("Strict-Transport-Security") == "" {
 		t.Fatal("missing HSTS")

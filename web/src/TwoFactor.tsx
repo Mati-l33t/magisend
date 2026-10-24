@@ -84,9 +84,11 @@ export function TwoFactorDialog({ close, changed }: { close: () => void; changed
     run(async () => {
       const result = await api<{ recovery_codes: string[] }>('/api/account/2fa/recovery', 'POST', {
         password,
+        code,
       });
       setCodes(result.recovery_codes);
       setPassword('');
+      setCode('');
       setStep('codes');
     });
   const saveCodes = () => {
@@ -231,12 +233,13 @@ export function TwoFactorDialog({ close, changed }: { close: () => void; changed
         >
           <p className="muted">{t('twoFactor.renewHint')}</p>
           {passwordField}
+          {codeField(t('twoFactor.codeOrRecovery'))}
           {errorBox}
           <div className="dialog-actions">
             <button type="button" className="secondary" onClick={() => setStep('on')}>
               {t('common.cancel')}
             </button>
-            <button className="primary" disabled={busy || !password}>
+            <button className="primary" disabled={busy || !password || !code.trim()}>
               {t('twoFactor.newCodes')}
             </button>
           </div>

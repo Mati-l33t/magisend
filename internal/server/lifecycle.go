@@ -102,6 +102,8 @@ func (a *App) Cleanup(now time.Time) error {
 		failures = append(failures, e)
 	}
 	a.expireUnclaimed(now)
+	a.pruneExpiredAttempts(now)
+	_, _ = a.db.Exec("DELETE FROM known_devices WHERE expires<=?", now.Unix())
 	return errors.Join(failures...)
 }
 func (a *App) lifecycleRoutes(m *http.ServeMux) {
@@ -131,19 +133,19 @@ func (a *App) lifecycleRoutes(m *http.ServeMux) {
 			fail(w, 410, "Delningen har gått ut")
 			return
 		}
+		// The link-wide count only refuses wrong guesses: the right password
+		// always works, so nobody can lock the recipients out by guessing.
 		shareKey := "unlock-share:" + s.ID
-		a.mu.Lock()
-		blocked = a.blocked(shareKey, unlockFailuresPerShare)
-		a.mu.Unlock()
-		if blocked {
-			fail(w, 429, "För många försök. Vänta 15 minuter")
-			return
-		}
 		if password != "" && bcrypt.CompareHashAndPassword([]byte(password), []byte(b.Password)) != nil {
 			a.mu.Lock()
+			blocked = a.blocked(shareKey, unlockFailuresPerShare)
 			a.failed(clientKey)
 			a.failed(shareKey)
 			a.mu.Unlock()
+			if blocked {
+				fail(w, 429, "För många försök. Vänta 15 minuter")
+				return
+			}
 			fail(w, 401, "Fel lösenord")
 			return
 		}

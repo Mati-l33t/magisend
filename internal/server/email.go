@@ -334,6 +334,9 @@ var emailText = map[string]map[string]string{
 		"inviteAction":          "Create your account",
 		"inviteExpiry":          "The invitation is valid for 7 days.",
 		"resetSubject":          "Reset your {brand} password",
+		"emailChangedSubject":   "Your {brand} email address was changed",
+		"emailChangedIntro":     "The email address of the account %s was changed to %s.",
+		"emailChangedWarning":   "If you did not do this, sign in and change your password, or ask your administrator for help.",
 		"resetIntro":            "Someone asked to reset the password for the account %s.",
 		"resetAction":           "Choose a new password",
 		"resetExpiry":           "The link is valid for one hour and works once. If you did not ask for this, ignore this email; your password stays the same.",
@@ -372,6 +375,9 @@ var emailText = map[string]map[string]string{
 		"inviteAction":          "Skapa ditt konto",
 		"inviteExpiry":          "Inbjudan gäller i 7 dagar.",
 		"resetSubject":          "Återställ ditt lösenord för {brand}",
+		"emailChangedSubject":   "Din e-postadress hos {brand} har ändrats",
+		"emailChangedIntro":     "E-postadressen för kontot %s har ändrats till %s.",
+		"emailChangedWarning":   "Om det inte var du, logga in och byt lösenord, eller be din administratör om hjälp.",
 		"resetIntro":            "Någon har bett om att återställa lösenordet för kontot %s.",
 		"resetAction":           "Välj ett nytt lösenord",
 		"resetExpiry":           "Länken gäller i en timme och fungerar en gång. Om det inte var du kan du strunta i mejlet; lösenordet är oförändrat.",
@@ -582,6 +588,8 @@ func (a *App) emailRoutes(m *http.ServeMux) {
 		var b struct {
 			Email        string `json:"email"`
 			RemindExpiry *bool  `json:"remind_expiry"`
+			Password     string `json:"password"`
+			Language     string `json:"language"`
 		}
 		if !decode(w, r, &b) {
 			return
@@ -594,6 +602,20 @@ func (a *App) emailRoutes(m *http.ServeMux) {
 		if !valid {
 			fail(w, 400, "invalid_email")
 			return
+		}
+		var previous string
+		if internal(w, a.db.QueryRow("SELECT email FROM users WHERE id=?", u.ID).Scan(&previous)) {
+			return
+		}
+		// Password resets go to this address, so changing it takes the password,
+		// and the old address hears about it.
+		if !strings.EqualFold(email, previous) {
+			if !a.confirmPassword(w, u.ID, b.Password) {
+				return
+			}
+			if previous != "" && a.emailEnabled() {
+				a.queueMail(emailChangedMail(previous, u.Username, email, b.Language))
+			}
 		}
 		if internal(w, exec(a, "UPDATE users SET email=? WHERE id=?", email, u.ID)) {
 			return
@@ -730,4 +752,17 @@ func (a *App) branded(m outgoingMail) outgoingMail {
 	markup := strings.NewReplacer("{brand}", html.EscapeString(name), "{BRAND}", html.EscapeString(strings.ToUpper(name)))
 	m.subject, m.text, m.body = plain.Replace(m.subject), plain.Replace(m.text), markup.Replace(m.body)
 	return m
+}
+
+func emailChangedMail(to, username, changed, language string) outgoingMail {
+	t := emailText[emailLanguage(language)]
+	shown := changed
+	if shown == "" {
+		shown = "—"
+	}
+	line := fmt.Sprintf(t["emailChangedIntro"], username, shown)
+	text := line + "\n\n" + t["emailChangedWarning"] + "\n"
+	body := `<p style="font-size:16px;margin:0">` + html.EscapeString(line) + `</p>` +
+		`<p style="color:#5d5953;margin:16px 0 0">` + html.EscapeString(t["emailChangedWarning"]) + `</p>`
+	return outgoingMail{to: to, subject: t["emailChangedSubject"], text: text, body: emailFrame(body)}
 }

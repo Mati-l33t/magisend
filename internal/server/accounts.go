@@ -153,12 +153,13 @@ func (a *App) cookie(r *http.Request, name, value string, age int, path string) 
 // blocked reports whether key reached max failures in its current window.
 // Caller holds mu.
 func (a *App) blocked(key string, max int) bool {
-	v, ok := a.attempts[key]
+	v, ok := a.attempts[attemptKey(key)]
 	return ok && time.Now().Before(v.until) && v.count >= max
 }
 
 // failed records one failed attempt for key. Caller holds mu.
 func (a *App) failed(key string) {
+	key = attemptKey(key)
 	now := time.Now()
 	if _, ok := a.attempts[key]; !ok && len(a.attempts) >= maxTrackedAttempts {
 		a.pruneAttempts(now)
@@ -169,6 +170,24 @@ func (a *App) failed(key string) {
 	}
 	v.count++
 	a.attempts[key] = v
+}
+
+// attemptKey keeps keys short whatever a request sent (a 64 KB "username",
+// say), so the table cannot grow large in memory.
+func attemptKey(key string) string {
+	if len(key) <= 96 {
+		return key
+	}
+	return key[:32] + hash(key)
+}
+
+// pruneExpiredAttempts drops entries whose window has passed. Caller holds mu.
+func (a *App) pruneExpiredAttempts(now time.Time) {
+	for k, v := range a.attempts {
+		if now.After(v.until) {
+			delete(a.attempts, k)
+		}
+	}
 }
 
 // pruneAttempts drops expired entries and, if the table is still full,
@@ -369,6 +388,9 @@ func (a *App) deleteAccount(id string) error {
 		return e
 	}
 	if _, e := a.db.Exec("DELETE FROM sessions WHERE user_id=?", id); e != nil {
+		return e
+	}
+	if _, e := a.db.Exec("DELETE FROM api_tokens WHERE user_id=?", id); e != nil {
 		return e
 	}
 	files, e := a.ids("SELECT l.file_id FROM library_files l JOIN files f ON f.id=l.file_id JOIN shares s ON s.id=f.share_id WHERE s.owner=?", id)

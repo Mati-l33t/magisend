@@ -55,8 +55,11 @@ func (a *App) authRoutes(m *http.ServeMux) {
 			return
 		}
 		clientKey, accountKey := "login:"+a.clientIP(r), "login-account:"+b.Username
+		// A name that cannot exist is only counted per client.
+		trackAccount := validUsername(b.Username)
 		a.mu.Lock()
-		blocked := a.blocked(clientKey, loginFailuresPerClient) || a.blocked(accountKey, loginFailuresPerAccount)
+		blocked := a.blocked(clientKey, loginFailuresPerClient) ||
+			trackAccount && a.blocked(accountKey, loginFailuresPerAccount) && !a.knownDevice(r, b.Username)
 		a.mu.Unlock()
 		if blocked {
 			fail(w, 429, "För många försök. Vänta 15 minuter")
@@ -72,7 +75,9 @@ func (a *App) authRoutes(m *http.ServeMux) {
 		if bcrypt.CompareHashAndPassword([]byte(p), []byte(b.Password)) != nil || e != nil {
 			a.mu.Lock()
 			a.failed(clientKey)
-			a.failed(accountKey)
+			if trackAccount {
+				a.failed(accountKey)
+			}
 			a.mu.Unlock()
 			a.audit(r, "", "login.failed", b.Username)
 			fail(w, 401, "Fel användarnamn eller lösenord")
@@ -92,7 +97,9 @@ func (a *App) authRoutes(m *http.ServeMux) {
 			valid := a.checkSecondFactor(id, b.Code)
 			if !valid {
 				a.failed(clientKey)
-				a.failed(accountKey)
+				if trackAccount {
+					a.failed(accountKey)
+				}
 			}
 			a.mu.Unlock()
 			if !valid {
@@ -101,11 +108,20 @@ func (a *App) authRoutes(m *http.ServeMux) {
 				return
 			}
 		}
+		// The session is only made if the password checked above is still the
+		// account's: a password changed meanwhile ended every session, and this
+		// one must not outlive that.
 		token := randomID()
-		if internal(w, exec(a, "INSERT INTO sessions(hash,user_id,expires) VALUES(?,?,?)", hash(token), id, time.Now().Add(7*24*time.Hour).Unix())) {
+		res, e := a.db.Exec("INSERT INTO sessions(hash,user_id,expires) SELECT ?,id,? FROM users WHERE id=? AND password=? AND disabled=0", hash(token), time.Now().Add(7*24*time.Hour).Unix(), id, p)
+		if internal(w, e) {
+			return
+		}
+		if n, e := res.RowsAffected(); e != nil || n != 1 {
+			fail(w, 401, "Fel användarnamn eller lösenord")
 			return
 		}
 		http.SetCookie(w, a.cookie(r, "magisend_session", token, 7*86400, "/"))
+		a.rememberDevice(w, r, id)
 		a.audit(r, b.Username, "login", "")
 		respond(w, 200, map[string]bool{"ok": true})
 	})

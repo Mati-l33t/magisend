@@ -97,6 +97,9 @@ export default function PublicShare({ id }: { id: string }) {
   const [terminal, setTerminal] = useState(false);
   const [rights, setRights] = useState<Rights | null>(null);
   const [credentials, setCredentials] = useState({ username: '', password: '' });
+  // Asked for once the password was right for an account with two-step login.
+  const [needCode, setNeedCode] = useState(false);
+  const [loginCode, setLoginCode] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
   const [addBusy, setAddBusy] = useState(false);
   const [deleting, setDeleting] = useState<SharedFile | null>(null);
@@ -161,10 +164,16 @@ export default function PublicShare({ id }: { id: string }) {
     setLoginBusy(true);
     setError('');
     try {
-      await api('/api/login', 'POST', credentials);
+      await api('/api/login', 'POST', needCode ? { ...credentials, code: loginCode } : credentials);
       setCredentials({ username: '', password: '' });
+      setNeedCode(false);
+      setLoginCode('');
       await refresh();
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'two_factor_required') {
+        setNeedCode(true);
+        return;
+      }
       setError(err as Error);
     } finally {
       setLoginBusy(false);
@@ -553,6 +562,24 @@ export default function PublicShare({ id }: { id: string }) {
                     onChange={(e) => setCredentials({ ...credentials, password: e.target.value })}
                   />
                 </label>
+                {needCode && (
+                  <>
+                    <label>
+                      {t('auth.code')}
+                      <input
+                        className="mono"
+                        required
+                        autoFocus
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        aria-describedby="public-code-help"
+                        value={loginCode}
+                        onChange={(e) => setLoginCode(e.target.value)}
+                      />
+                    </label>
+                    <small id="public-code-help">{t('auth.codeHint')}</small>
+                  </>
+                )}
                 <button className="primary full" disabled={loginBusy}>
                   {loginBusy ? <LoaderCircle className="spin" size={16} /> : <Lock size={16} />}{' '}
                   {t('auth.login')}

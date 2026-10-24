@@ -166,7 +166,10 @@ export function AccountEmailDialog({
 }) {
   useLanguage();
   const [email, setEmail] = useState(current);
+  const [password, setPassword] = useState('');
   const [remind, setRemind] = useState(remindNow);
+  // A new address needs the password: password resets are sent there.
+  const changing = email.trim().toLowerCase() !== current.trim().toLowerCase();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useMessage();
   async function save(event: React.FormEvent) {
@@ -174,7 +177,12 @@ export function AccountEmailDialog({
     setBusy(true);
     setError('');
     try {
-      await api('/api/account/email', 'PUT', { email, remind_expiry: remind });
+      await api('/api/account/email', 'PUT', {
+        email,
+        remind_expiry: remind,
+        password: changing ? password : '',
+        language: getLanguage(),
+      });
       saved();
       close();
     } catch (e) {
@@ -197,6 +205,17 @@ export function AccountEmailDialog({
             placeholder="name@example.com"
           />
         </label>
+        {changing && (
+          <label>
+            {t('email.confirmPassword')}
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+        )}
         <label className="checkbox">
           <input type="checkbox" checked={remind} onChange={(e) => setRemind(e.target.checked)} />
           {t('email.remindExpiry')}
@@ -210,7 +229,7 @@ export function AccountEmailDialog({
           <button type="button" className="secondary" onClick={close}>
             {t('common.cancel')}
           </button>
-          <button className="primary" disabled={busy}>
+          <button className="primary" disabled={busy || (changing && !password)}>
             <Save size={16} />
             {t('common.save')}
           </button>

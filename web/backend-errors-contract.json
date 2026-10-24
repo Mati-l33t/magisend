@@ -5,6 +5,14 @@
     "Användarnamn: 3–40 gemener/siffror, punkt, understreck eller bindestreck. Lösenord: 12–72 UTF-8-byte"
   ],
   "setup_complete": ["Setup is already complete", "Installationen är redan slutförd"],
+  "use_account_settings": [
+    "Change your own password and two-step login in your account settings",
+    "Ändra ditt eget lösenord och din tvåstegsinloggning i dina kontoinställningar"
+  ],
+  "two_factor_on": [
+    "Two-step login is already on. Turn it off first",
+    "Tvåstegsinloggning är redan på. Stäng av den först"
+  ],
   "setup_code_invalid": ["The setup code is not correct", "Installationskoden stämmer inte"],
   "database_unavailable": ["The database is unavailable", "Databasen är inte tillgänglig"],
   "not_found": ["Not found", "Hittades inte"],

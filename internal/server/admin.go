@@ -65,7 +65,8 @@ func (a *App) adminRoutes(m *http.ServeMux) {
 		respond(w, 201, u)
 	})
 	m.HandleFunc("PATCH /api/admin/users/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := a.require(w, r, true); !ok {
+		caller, ok := a.require(w, r, true)
+		if !ok {
 			return
 		}
 		var b struct {
@@ -76,6 +77,13 @@ func (a *App) adminRoutes(m *http.ServeMux) {
 			ResetTwoFactor bool `json:"reset_two_factor"`
 		}
 		if !decode(w, r, &b) {
+			return
+		}
+		// An administrator's own password and two-step login change in their
+		// account settings, which ask for the current password and code; here
+		// a session alone would be enough.
+		if r.PathValue("id") == caller.ID && (b.ResetTwoFactor || b.Password != nil) {
+			fail(w, 403, "use_account_settings")
 			return
 		}
 		if b.ResetTwoFactor {

@@ -10,7 +10,7 @@ import (
 func TestExpiryReminderOncePerExpiry(t *testing.T) {
 	a, admin := emailAdmin(t)
 	configureEmail(t, a, admin)
-	folderCall(t, a, admin, "PUT", "/api/account/email", `{"email":"owner@example.com"}`, 200)
+	folderCall(t, a, admin, "PUT", "/api/account/email", `{"email":"owner@example.com","password":"correct horse battery staple"}`, 200)
 	send := func(days int) Share {
 		t.Helper()
 		w := call(a, "POST", "/api/shares", `{"title":"Holiday","days":`+strconv.Itoa(days)+`,"language":"sv","files":[{"name":"a.txt","size":4}]}`, admin)
@@ -59,7 +59,7 @@ func TestExpiryReminderOncePerExpiry(t *testing.T) {
 		t.Fatal("extended link not reminded again")
 	}
 	// Turned off: nothing.
-	folderCall(t, a, admin, "PUT", "/api/account/email", `{"email":"owner@example.com","remind_expiry":false}`, 200)
+	folderCall(t, a, admin, "PUT", "/api/account/email", `{"email":"owner@example.com","password":"correct horse battery staple","remind_expiry":false}`, 200)
 	if me := folderCall(t, a, admin, "GET", "/api/me", "", 200); me["user"].(map[string]any)["remind_expiry"] != false {
 		t.Fatal(me)
 	}

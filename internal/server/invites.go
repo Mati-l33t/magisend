@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"html"
@@ -247,30 +248,29 @@ func (a *App) inviteRoutes(m *http.ServeMux) {
 			fail(w, 429, "too_many_attempts_wait")
 			return
 		}
-		// The answer is the same whether or not an account matched.
-		done := func() { respond(w, 200, map[string]bool{"ok": true}) }
-		login := strings.TrimSpace(b.Login)
-		var id, name, email string
-		if login == "" || a.db.QueryRow("SELECT id,username,email FROM users WHERE (username=? OR lower(email)=lower(?)) AND email<>'' AND disabled=0 LIMIT 1", login, login).Scan(&id, &name, &email) != nil {
-			done()
-			return
-		}
-		var recent int
-		if internal(w, a.db.QueryRow("SELECT COUNT(*) FROM password_resets WHERE user_id=? AND created>?", id, time.Now().Add(-time.Hour).Unix()).Scan(&recent)) {
-			return
-		}
-		if recent >= resetsPerAccountHour {
-			done()
-			return
-		}
-		token := randomID()
-		now := time.Now()
-		if internal(w, exec(a, "INSERT INTO password_resets(hash,user_id,created,expires) VALUES(?,?,?,?)", hash(token), id, now.Unix(), now.Add(resetLifetime).Unix())) {
-			return
-		}
-		a.queueMail(resetMail(email, name, a.linkOrigin()+"/reset/"+token, b.Language))
-		a.audit(r, "", "password.reset_requested", name)
-		done()
+		// The answer is the same, and comes as fast, whether or not an account
+		// matched: the account's work happens after it was sent.
+		respond(w, 200, map[string]bool{"ok": true})
+		login, language, request := strings.TrimSpace(b.Login), b.Language, r.Clone(context.Background())
+		go func() {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			var id, name, email string
+			if login == "" || a.db.QueryRow("SELECT id,username,email FROM users WHERE (username=? OR lower(email)=lower(?)) AND email<>'' AND disabled=0 LIMIT 1", login, login).Scan(&id, &name, &email) != nil {
+				return
+			}
+			var recent int
+			if a.db.QueryRow("SELECT COUNT(*) FROM password_resets WHERE user_id=? AND created>?", id, time.Now().Add(-time.Hour).Unix()).Scan(&recent) != nil || recent >= resetsPerAccountHour {
+				return
+			}
+			token := randomID()
+			now := time.Now()
+			if exec(a, "INSERT INTO password_resets(hash,user_id,created,expires) VALUES(?,?,?,?)", hash(token), id, now.Unix(), now.Add(resetLifetime).Unix()) != nil {
+				return
+			}
+			a.queueMail(resetMail(email, name, a.linkOrigin()+"/reset/"+token, language))
+			a.audit(request, "", "password.reset_requested", name)
+		}()
 	})
 	m.HandleFunc("GET /api/password/reset/{token}", func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()

@@ -228,7 +228,7 @@ func TestDownloadNotificationsAreCountedAndBundled(t *testing.T) {
 	if w := call(a, "PUT", "/api/shares/"+sh.ID+"/notify", `{"enabled":true}`, admin); w.Code != 409 {
 		t.Fatal("notifications enabled without an account email", w.Code)
 	}
-	if w := call(a, "PUT", "/api/account/email", `{"email":"mati@example.com"}`, admin); w.Code != 200 {
+	if w := call(a, "PUT", "/api/account/email", `{"email":"mati@example.com","password":"correct horse battery staple"}`, admin); w.Code != 200 {
 		t.Fatal(w.Code, w.Body)
 	}
 	if w := call(a, "PUT", "/api/shares/"+sh.ID+"/notify", `{"enabled":true,"language":"sv"}`, admin); w.Code != 200 {

@@ -131,7 +131,7 @@ func TestOfflineStorageKeepsTheAppWorking(t *testing.T) {
 func TestStorageGoesOfflineAndBackByMail(t *testing.T) {
 	a, admin := emailAdmin(t)
 	configureEmail(t, a, admin)
-	if w := call(a, "PUT", "/api/account/email", `{"email":"admin@example.com"}`, admin); w.Code != 200 {
+	if w := call(a, "PUT", "/api/account/email", `{"email":"admin@example.com","password":"correct horse battery staple"}`, admin); w.Code != 200 {
 		t.Fatal(w.Code, w.Body)
 	}
 	share := t.TempDir()

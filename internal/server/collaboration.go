@@ -54,7 +54,14 @@ func (a *App) collaborationAllowed(w http.ResponseWriter, r *http.Request, s Sha
 		return u, false
 	}
 	var owner string
-	if internal(w, a.db.QueryRow("SELECT owner FROM shares WHERE id=?", s.ID).Scan(&owner)) {
+	var ownerDisabled bool
+	if internal(w, a.db.QueryRow("SELECT s.owner,COALESCE(u.disabled,1) FROM shares s LEFT JOIN users u ON u.id=s.owner WHERE s.id=?", s.ID).Scan(&owner, &ownerDisabled)) {
+		return u, false
+	}
+	// Nothing is written into the links of a disabled (or half-deleted)
+	// account, as with its upload requests.
+	if ownerDisabled {
+		permissionDenied(w)
 		return u, false
 	}
 	if u.ID == owner {

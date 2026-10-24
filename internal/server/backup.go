@@ -323,14 +323,41 @@ func (a *App) discardStored(path string) error {
 	return os.Remove(path)
 }
 
+// finishBackup removes what was deleted during the backup, unless the file
+// is in use there again (moved away and back meanwhile, say).
 func (a *App) finishBackup() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.backup.Lock()
 	held := a.backup.held
 	a.backup.running, a.backup.held = false, nil
 	a.backup.Unlock()
 	for _, path := range held {
-		_ = os.Remove(path)
+		if !a.storedInUse(path) {
+			_ = os.Remove(path)
+		}
 	}
+}
+
+// storedInUse reports whether a file or version the database knows is
+// stored at path. Caller holds mu.
+func (a *App) storedInUse(path string) bool {
+	name := filepath.Base(path)
+	rows, e := a.db.Query("SELECT backend FROM files WHERE id=? UNION SELECT f.backend FROM text_versions v JOIN files f ON f.id=v.file_id WHERE v.blob=?", name, name)
+	if e != nil {
+		return true
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var loc string
+		if rows.Scan(&loc) != nil {
+			return true
+		}
+		if dir, e := a.blobDir(loc); e == nil && dir == filepath.Dir(path) {
+			return true
+		}
+	}
+	return false
 }
 
 type locationSize struct {

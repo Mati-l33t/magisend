@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 var tokenInMail = regexp.MustCompile(`/(invite|reset)/([a-f0-9]{48})`)
@@ -86,7 +87,7 @@ func TestPasswordResetByEmail(t *testing.T) {
 		t.Fatal("reset offered without email")
 	}
 	configureEmail(t, a, admin)
-	call(a, "PUT", "/api/account/email", `{"email":"mati@example.com"}`, admin)
+	call(a, "PUT", "/api/account/email", `{"email":"mati@example.com","password":"correct horse battery staple"}`, admin)
 	if decodeObject(t, call(a, "GET", "/api/status", "", ""))["password_reset"] != true {
 		t.Fatal("reset not offered")
 	}
@@ -100,7 +101,12 @@ func TestPasswordResetByEmail(t *testing.T) {
 	r.Header.Set("X-MagiSend", "1")
 	w := httptest.NewRecorder()
 	a.Handler().ServeHTTP(w, r)
-	mails := queued(a)
+	// The reset is prepared after the answer was sent.
+	var mails []outgoingMail
+	for i := 0; i < 200 && len(mails) == 0; i++ {
+		time.Sleep(10 * time.Millisecond)
+		mails = queued(a)
+	}
 	if w.Code != 200 || len(mails) != 1 || strings.Contains(mails[0].text, "evil") || !strings.Contains(mails[0].text, "http://example.com/reset/") {
 		t.Fatal(w.Code, mails)
 	}

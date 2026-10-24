@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 
@@ -37,25 +38,22 @@ type App struct {
 	// When a client was last counted downloading a file, so its later ranges
 	// continue that download instead of counting again.
 	resumes map[string]time.Time
-	// Download slots each client holds.
-	downloadClients struct {
-		sync.Mutex
-		count map[string]int
-	}
-	mu                            sync.Mutex
-	attempts                      map[string]attempt
-	mutations, uploads, downloads chan struct{}
-	thumbs                        chan string
-	thumbInflight                 sync.Map
-	thumbBlocked                  sync.Map
-	trustedProxies                []*net.IPNet
-	ui                            fs.FS
-	updates                       *Updates
-	mail                          chan outgoingMail
-	push                          chan pushJob
-	backup                        backupState
-	sendMail                      func(EmailSettings, outgoingMail) error
-	stores                        storages
+	// Slots each client holds.
+	downloadClients, mutationClients, uploadClients clientSlots
+	mu                                              sync.Mutex
+	attempts                                        map[string]attempt
+	mutations, uploads, downloads                   chan struct{}
+	thumbs                                          chan string
+	thumbInflight                                   sync.Map
+	thumbBlocked                                    sync.Map
+	trustedProxies                                  []*net.IPNet
+	ui                                              fs.FS
+	updates                                         *Updates
+	mail                                            chan outgoingMail
+	push                                            chan pushJob
+	backup                                          backupState
+	sendMail                                        func(EmailSettings, outgoingMail) error
+	stores                                          storages
 }
 type attempt struct {
 	count int
@@ -137,8 +135,10 @@ func NewApp(root, origin string) (*App, error) {
 			return nil, e
 		}
 	}
-	a := &App{db: db, root: root, publicOrigin: origin, attempts: make(map[string]attempt), mutations: make(chan struct{}, 8), uploads: make(chan struct{}, 4), downloads: make(chan struct{}, downloadSlots), thumbs: make(chan string, thumbQueueDepth), ui: webInterface(), updates: newUpdates(), mail: make(chan outgoingMail, emailQueueDepth), push: make(chan pushJob, emailQueueDepth), sendMail: sendSMTP, indexSums: map[string][32]byte{}, resumes: map[string]time.Time{}}
+	a := &App{db: db, root: root, publicOrigin: origin, attempts: make(map[string]attempt), mutations: make(chan struct{}, mutationSlots), uploads: make(chan struct{}, uploadSlots), downloads: make(chan struct{}, downloadSlots), thumbs: make(chan string, thumbQueueDepth), ui: webInterface(), updates: newUpdates(), mail: make(chan outgoingMail, emailQueueDepth), push: make(chan pushJob, emailQueueDepth), sendMail: sendSMTP, indexSums: map[string][32]byte{}, resumes: map[string]time.Time{}}
 	a.downloadClients.count = map[string]int{}
+	a.mutationClients.count = map[string]int{}
+	a.uploadClients.count = map[string]int{}
 	go a.thumbnailWorker()
 	if e = a.loadStorage(); e != nil {
 		db.Close()
@@ -271,6 +271,9 @@ func migrate(db *sql.DB) error {
 		return e
 	}
 	if e = migrateNotes(db); e != nil {
+		return e
+	}
+	if e = migrateDevices(db); e != nil {
 		return e
 	}
 	return migrateStorage(db)
@@ -514,21 +517,32 @@ func (a *App) Handler() http.Handler {
 		}()
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			if r.Method != "GET" && r.Method != "HEAD" && r.Method != "OPTIONS" {
-				slots, deadline := a.mutations, 30*time.Second
+				slots, clients, perClient, deadline := a.mutations, &a.mutationClients, mutationsPerClient, 30*time.Second
 				if r.Method == "PATCH" && strings.HasPrefix(r.URL.Path, "/api/uploads/") {
-					slots = a.uploads
+					slots, clients, perClient = a.uploads, &a.uploadClients, uploadsPerClient
 				}
 				// A token upload sends whole files in one request.
 				if r.URL.Path == uploadEndpoint {
-					slots, deadline = a.uploads, time.Hour
+					slots, clients, perClient, deadline = a.uploads, &a.uploadClients, uploadsPerClient, time.Hour
 				}
-				if !acquire(w, slots) {
+				release, ok := a.acquireFor(w, r, slots, clients, perClient)
+				if !ok {
 					return
 				}
-				defer func() { <-slots }()
+				defer release()
 				// ResponseController also bounds bodies when Handler is served by a caller
 				// other than main. Test recorders do not support connection deadlines.
 				_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(deadline))
+				// Every request that is not a file stream is read whole here, so no
+				// handler ever waits on a slow client while it holds mu.
+				if !streamingRequest(r) {
+					body, e := io.ReadAll(io.LimitReader(r.Body, maxBufferedBody+1))
+					if e != nil || len(body) > maxBufferedBody {
+						fail(w, 413, "Ogiltiga indata")
+						return
+					}
+					r.Body = io.NopCloser(bytes.NewReader(body))
+				}
 			}
 			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(2 * time.Minute))
 		}

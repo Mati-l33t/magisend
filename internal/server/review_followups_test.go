@@ -2,8 +2,12 @@ package server
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A new password ends upload tokens as well as sessions.
@@ -65,5 +69,131 @@ func TestSlotsGroupIPv6ByHousehold(t *testing.T) {
 	}
 	if got := slotClient(a.clientIP(fetchRequest("[2001:db8:2::1]:443"))); !strings.HasSuffix(got, "/56") || keys[got] {
 		t.Fatal("another household shares the key", got)
+	}
+}
+
+// Restoring an older version never takes the place of the newest one, even
+// right after the same person edited it.
+func TestRestoreKeepsTheNewestVersion(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	folderCall(t, a, token, "PUT", "/api/admin/capabilities/defaults", `{"edit_own":true}`, 200)
+	file := libraryUpload(t, a, token, "", "draft.txt", "first").Files[0].ID
+	folderCall(t, a, token, "PUT", "/api/library/files/"+file+"/text", textBody(1, "second"), 200)
+	folderCall(t, a, token, "PUT", "/api/library/files/"+file+"/text", textBody(2, "newest"), 200)
+	folderCall(t, a, token, "POST", "/api/library/files/"+file+"/restore", `{"version":3,"restore":1}`, 200)
+	rows, e := a.db.Query("SELECT blob FROM text_versions WHERE file_id=? ORDER BY number", file)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var texts []string
+	for rows.Next() {
+		var blob string
+		rows.Scan(&blob)
+		data, _ := os.ReadFile(a.blob(blob))
+		texts = append(texts, string(data))
+	}
+	rows.Close()
+	if !slices.Contains(texts, "newest") || texts[len(texts)-1] != "first" {
+		t.Fatal("history after restore", texts)
+	}
+}
+
+// An older database restored after files were deleted still starts, and the
+// administrator can see and remove what is missing. An empty folder that
+// looks unmounted is still refused.
+func TestRestoredDatabaseWithMissingFilesStarts(t *testing.T) {
+	root := t.TempDir()
+	a, e := NewApp(root, "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	kept := libraryUpload(t, a, token, "", "kept.txt", "still here").Files[0].ID
+	gone := libraryUpload(t, a, token, "", "gone.txt", "deleted later").Files[0].ID
+	older := filepath.Join(t.TempDir(), "older.sqlite")
+	if _, e = a.db.Exec("VACUUM INTO ?", older); e != nil {
+		t.Fatal(e)
+	}
+	folderCall(t, a, token, "DELETE", "/api/library/files/"+gone, `{}`, 200)
+	folderCall(t, a, token, "DELETE", "/api/trash/"+gone, `{}`, 200)
+	a.db.Close()
+	restore := func() {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			os.Remove(filepath.Join(root, "magisend.sqlite"+suffix))
+		}
+		data, _ := os.ReadFile(older)
+		os.WriteFile(filepath.Join(root, "magisend.sqlite"), data, 0600)
+	}
+	restore()
+	if a, e = NewApp(root, ""); e != nil {
+		t.Fatal("a restored backup with one deleted file does not start:", e)
+	}
+	token = login(t, a, "mati")
+	listed := decodeObject(t, call(a, "GET", "/api/admin/storage/missing", "", token))
+	files := listed["files"].([]any)
+	if listed["count"] != float64(1) || files[0].(map[string]any)["name"] != "gone.txt" {
+		t.Fatal(listed)
+	}
+	if got := folderCall(t, a, token, "DELETE", "/api/admin/storage/missing", `{}`, 200); got["removed"] != float64(1) {
+		t.Fatal(got)
+	}
+	if w := call(a, "GET", "/api/library/files/"+kept+"/download", "", token); w.Body.String() != "still here" {
+		t.Fatal(w.Code, w.Body)
+	}
+	if decodeObject(t, call(a, "GET", "/api/admin/storage/missing", "", token))["count"] != float64(0) {
+		t.Fatal("still missing")
+	}
+	a.db.Close()
+
+	// A data folder emptied of everything, index included, is refused.
+	other := t.TempDir()
+	b, e := NewApp(other, "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	setupAdmin(t, b)
+	owner := login(t, b, "mati")
+	for i := range 3 {
+		libraryUpload(t, b, owner, "", fmt.Sprintf("f%d.txt", i), "x")
+	}
+	b.Cleanup(time.Now())
+	b.db.Close()
+	entries, _ := os.ReadDir(filepath.Join(other, "blobs"))
+	for _, entry := range entries {
+		os.RemoveAll(filepath.Join(other, "blobs", entry.Name()))
+	}
+	if c, e := NewApp(other, ""); e == nil {
+		c.db.Close()
+		t.Fatal("an emptied storage folder was accepted")
+	}
+}
+
+// A file moved to another location and back while a backup runs keeps its
+// data when the deletions held for the backup are made.
+func TestMoveAndBackDuringBackupKeepsTheFile(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	file := libraryUpload(t, a, token, "", "travel.txt", "there and back").Files[0].ID
+	nas := addStorage(t, a, token, t.TempDir())
+	a.backup.Lock()
+	a.backup.running = true
+	a.backup.Unlock()
+	if e := a.moveFile(file, nas); e != nil {
+		t.Fatal(e)
+	}
+	if e := a.moveFile(file, localLocation); e != nil {
+		t.Fatal(e)
+	}
+	a.finishBackup()
+	if w := call(a, "GET", "/api/library/files/"+file+"/download", "", token); w.Code != 200 || w.Body.String() != "there and back" {
+		t.Fatal("the file lost its data", w.Code, w.Body)
+	}
+	nasDir, _ := a.blobDir(nas)
+	if _, e := os.Stat(filepath.Join(nasDir, file)); !os.IsNotExist(e) {
+		t.Fatal("the copy left on the other location was kept", e)
 	}
 }
