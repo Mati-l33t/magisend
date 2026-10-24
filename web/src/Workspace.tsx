@@ -1341,7 +1341,7 @@ function ReadyImage({ shareId, file }: { shareId: string; file: SharedFile }) {
     )
       .then((response) => {
         const type = (response.headers?.get('Content-Type') || '').split(';')[0].trim();
-        return response.ok && /^image\/(png|jpeg|gif)$/.test(type) ? response.blob() : null;
+        return response.ok && /^image\/(png|jpeg|gif|webp)$/.test(type) ? response.blob() : null;
       })
       .then((blob) => {
         if (!blob || controller.signal.aborted) return;

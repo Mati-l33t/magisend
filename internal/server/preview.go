@@ -11,10 +11,41 @@ import (
 	"mime"
 	"net/http"
 	"time"
+
+	"golang.org/x/image/webp"
 )
 
 const previewMaxBytes int64 = 20 << 20
 const previewMaxPixels = 16_000_000
+
+// Larger JPEGs, up to these limits, are previewed by their header only.
+const (
+	largeJPEGMaxBytes  int64 = 64 << 20
+	largeJPEGMaxPixels       = 200_000_000
+)
+
+// largeJPEG returns the file for a JPEG too big to decode here but within the
+// large limits, after checking its header: a JPEG start and a frame of a
+// sensible size. Anything else goes the usual, fully decoded way.
+func largeJPEG(file io.ReaderAt, size int64) (io.ReadSeeker, bool) {
+	if size > largeJPEGMaxBytes {
+		return nil, false
+	}
+	whole := io.NewSectionReader(file, 0, size)
+	head := make([]byte, 3)
+	if _, e := whole.ReadAt(head, 0); e != nil || !bytes.Equal(head, []byte{0xFF, 0xD8, 0xFF}) {
+		return nil, false
+	}
+	config, format, e := image.DecodeConfig(io.NewSectionReader(file, 0, size))
+	if e != nil || format != "jpeg" || config.Width <= 0 || config.Height <= 0 || config.Width > largeJPEGMaxPixels/config.Height {
+		return nil, false
+	}
+	if size <= previewMaxBytes && config.Width <= previewMaxPixels/config.Height {
+		return nil, false
+	}
+	return whole, true
+}
+
 const previewMaxGIFFrames = 32
 
 // Zero is reserved for permanent shares, not sessions, grants or capabilities.
@@ -61,6 +92,15 @@ func (a *App) previewWith(w http.ResponseWriter, r *http.Request, authorize func
 	defer file.Close()
 	// Authorization, offset, backend and actual storage are checked before
 	// examining the content. Both bytes and decoding work stay off mu.
+	// Phone photos can be far larger than what is decoded here (a 200 MP
+	// camera): a JPEG beyond those limits is checked by its header only and
+	// sent as it is, for the browser to show, never decoded on the server.
+	if large, ok := largeJPEG(file, selected.Size); ok {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": selected.Name}))
+		http.ServeContent(w, r, selected.Name, time.Time{}, large)
+		return
+	}
 	if selected.Size > previewMaxBytes {
 		fail(w, 415, "preview_unsupported")
 		return
@@ -82,6 +122,16 @@ func (a *App) previewWith(w http.ResponseWriter, r *http.Request, authorize func
 }
 
 func rasterPreviewType(data []byte) (string, bool) {
+	// WebP is read by its own decoder, not registered with image, so nothing
+	// else starts decoding it. Animated WebP is not supported and refused.
+	if len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP" {
+		config, e := webp.DecodeConfig(bytes.NewReader(data))
+		if e != nil || config.Width <= 0 || config.Height <= 0 || config.Width > previewMaxPixels/config.Height {
+			return "", false
+		}
+		_, e = webp.Decode(bytes.NewReader(data))
+		return "image/webp", e == nil
+	}
 	config, format, e := image.DecodeConfig(bytes.NewReader(data))
 	if e != nil || config.Width <= 0 || config.Height <= 0 || config.Width > previewMaxPixels/config.Height {
 		return "", false

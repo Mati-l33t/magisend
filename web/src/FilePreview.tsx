@@ -24,6 +24,8 @@ const SheetView = lazy(() => import('./SheetView'));
 const Markdown = lazy(() => import('./Markdown'));
 const CodeView = lazy(() => import('./CodeView'));
 const maxBytes = 20 * 1024 * 1024;
+// Large phone photos (up to 200 MP) are JPEGs the server sends as they are.
+const maxImageBytes = 64 * 1024 * 1024;
 
 // Which viewer a file name suggests; the server checks the actual content.
 export type PreviewKind = 'image' | 'pdf' | 'video' | 'audio' | 'text' | 'document' | 'sheet';
@@ -35,7 +37,7 @@ const textExtensions = new Set(
 export function previewKind(name: string): PreviewKind | null {
   const ext = name.toLowerCase().split('.').pop() || '';
   if (name.includes('.') && textExtensions.has(ext)) return 'text';
-  if (['png', 'jpg', 'jpeg', 'gif'].includes(ext)) return 'image';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image';
   if (ext === 'pdf') return 'pdf';
   if (ext === 'docx') return 'document';
   if (ext === 'xlsx') return 'sheet';
@@ -43,19 +45,20 @@ export function previewKind(name: string): PreviewKind | null {
   if (['mp3', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac'].includes(ext)) return 'audio';
   return null;
 }
-const rasterTypes = new Set(['image/png', 'image/jpeg', 'image/gif']);
+const rasterTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 function unsupported() {
   return new LocalizedError(message('errors.preview_unsupported'));
 }
 async function previewBlob(response: Response, type: string) {
+  const limit = type === 'image/jpeg' ? maxImageBytes : maxBytes;
   const length = response.headers.get('Content-Length');
-  if (length !== null && Number(length) > maxBytes) {
+  if (length !== null && Number(length) > limit) {
     await response.body?.cancel();
     throw unsupported();
   }
   if (!response.body) {
     const blob = await response.blob();
-    if (blob.size > maxBytes) throw unsupported();
+    if (blob.size > limit) throw unsupported();
     return blob.slice(0, blob.size, type);
   }
   const reader = response.body.getReader();
@@ -66,7 +69,7 @@ async function previewBlob(response: Response, type: string) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > maxBytes) {
+      if (size > limit) {
         await reader.cancel();
         throw unsupported();
       }

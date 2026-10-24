@@ -2,12 +2,15 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"hash/crc32"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -115,5 +118,56 @@ func TestPublishZeroByteRejectsSubstitutedStorage(t *testing.T) {
 				t.Error("global mutex unavailable after rejection", w.Code)
 			}
 		})
+	}
+}
+
+// A WebP cut short is refused, never passed to the browser undecoded.
+func TestPreviewRejectsTruncatedWebP(t *testing.T) {
+	data, _ := base64.StdEncoding.DecodeString("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
+	if kind, ok := rasterPreviewType(data); !ok || kind != "image/webp" {
+		t.Fatal("a valid WebP was refused", kind)
+	}
+	if _, ok := rasterPreviewType(data[:len(data)-4]); ok {
+		t.Fatal("a truncated WebP was accepted")
+	}
+}
+
+// A photo from a 200 MP camera is previewed by its header, without decoding;
+// a large PNG is still refused.
+func TestLargeJPEGIsPreviewedByItsHeader(t *testing.T) {
+	var small bytes.Buffer
+	if e := jpeg.Encode(&small, image.NewGray(image.Rect(0, 0, 8, 8)), nil); e != nil {
+		t.Fatal(e)
+	}
+	data := small.Bytes()
+	// Rewrite the frame size to 16320x12240 (200 MP, as a Galaxy S25 takes).
+	for i := 0; i+9 < len(data); i++ {
+		if data[i] == 0xFF && data[i+1] == 0xC0 {
+			binary.BigEndian.PutUint16(data[i+5:], 12240)
+			binary.BigEndian.PutUint16(data[i+7:], 16320)
+			break
+		}
+	}
+	path := filepath.Join(t.TempDir(), "photo.jpg")
+	os.WriteFile(path, data, 0600)
+	f, _ := os.Open(path)
+	defer f.Close()
+	if _, ok := largeJPEG(f, int64(len(data))); !ok {
+		t.Fatal("a 200 MP JPEG was not accepted")
+	}
+	binary.BigEndian.PutUint16(data[bytes.Index(data, []byte{0xFF, 0xC0})+5:], 20000)
+	os.WriteFile(path, data, 0600)
+	g, _ := os.Open(path)
+	defer g.Close()
+	if _, ok := largeJPEG(g, int64(len(data))); ok {
+		t.Fatal("a JPEG past 200 MP was accepted")
+	}
+	var png8 bytes.Buffer
+	png.Encode(&png8, image.NewGray(image.Rect(0, 0, 8, 8)))
+	os.WriteFile(path, png8.Bytes(), 0600)
+	h, _ := os.Open(path)
+	defer h.Close()
+	if _, ok := largeJPEG(h, int64(png8.Len())); ok {
+		t.Fatal("a PNG took the JPEG path")
 	}
 }

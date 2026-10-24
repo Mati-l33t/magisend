@@ -14,6 +14,7 @@ Fixes from a second review, of the 1.0.6 fixes themselves.
 - **Uploads with API tokens** reserve space as data arrives instead of the whole remaining quota.
 - **Photo location:** TIFF and DNG files are cleaned where their directories point, without reading the whole file, every directory in the chain is checked, BigTIFF is refused, and PNG raw Exif profiles are replaced even when not compressed; replacing a file cleans it only once the replacement is allowed, and a photo that cannot be cleaned is refused with the right message.
 - **Email settings:** clearing the web address uses this server's own address again rather than the old one.
+- **Viewer:** WebP pictures open like other pictures, and large phone photos (JPEG up to 64 MB and 200 megapixels) open instead of being refused.
 
 ## 1.0.6
 

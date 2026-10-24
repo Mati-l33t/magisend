@@ -3,6 +3,7 @@ package server
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -237,11 +238,15 @@ func TestPreviewRasterMIMEHeadersAndOriginalBytes(t *testing.T) {
 	owner := login(t, a, "mati")
 	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
 	img.Set(0, 0, color.RGBA{R: 255, A: 255})
-	for _, format := range []string{"png", "jpeg", "gif"} {
+	for _, format := range []string{"png", "jpeg", "gif", "webp"} {
 		t.Run(format, func(t *testing.T) {
 			var encoded bytes.Buffer
 			var e error
 			switch format {
+			case "webp":
+				// A 1×1 lossless WebP; the standard library cannot write one.
+				data, _ := base64.StdEncoding.DecodeString("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
+				encoded.Write(data)
 			case "png":
 				e = png.Encode(&encoded, img)
 			case "jpeg":
