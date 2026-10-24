@@ -102,4 +102,4 @@ Several `-F file=@…` parts become one share. Optional query parameters: `days`
 
 ## Storage limits
 
-The storage budget (Administration → Default policy) caps all stored files together; new installations start at three quarters of the disk. Per-user quotas, maximum file and share size and default expiry are set in the same place. Unpublished upload drafts expire after 24 hours and a cleanup runs every five minutes.
+The storage budget (Administration → Limits) caps all stored files together; new installations start at three quarters of the disk. Per-user quotas, maximum file and share size and default expiry are set in the same place. Unpublished upload drafts expire after 24 hours and a cleanup runs every five minutes.

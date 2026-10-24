@@ -95,7 +95,7 @@ download_template() { # storage -> volume id of a freshly downloaded Debian temp
 defaults() {
   CTID=$(pvesh get /cluster/nextid)
   HOSTNAME_=magisend
-  DISK=8
+  DISK=4
   CORES=1
   RAM=512
   BRIDGE=vmbr0
@@ -229,7 +229,7 @@ main() {
   defaults
   local mode
   mode=$(whiptail --backtitle "$TITLE" --title "SETTINGS" --menu "Create the MagiSend container with:" 12 64 2 \
-    default "Default settings (1 core, 512 MB, 8 GB, DHCP)" \
+    default "Default settings (1 core, 512 MB, 4 GB, DHCP)" \
     advanced "Advanced settings" 3>&1 1>&2 2>&3) || die "Cancelled"
   [ "$mode" = advanced ] && advanced
   header

@@ -88,7 +88,7 @@ Run on your **Proxmox host** as root:
 bash <(curl -fsSL https://raw.githubusercontent.com/Mati-l33t/magisend/main/proxmox/install.sh)
 ```
 
-It creates an unprivileged Debian LXC (default 1 core, 512 MB RAM, 8 GB disk, DHCP) and installs MagiSend in it. The container's Notes panel links to the project, and signing in to the container shows its address and how to update. Choose **Advanced** to set the container ID, hostname, disk, CPU, RAM, bridge, static IP, VLAN, root password, port and a public address for a reverse proxy.
+It creates an unprivileged Debian LXC (default 1 core, 512 MB RAM, 4 GB disk, DHCP) and installs MagiSend in it. Uploaded files are stored on that disk unless you add a NAS share; the disk can be grown later in Proxmox, after which you raise the storage budget under **Administration → Limits**. The container's Notes panel links to the project, and signing in to the container shows its address and how to update. Choose **Advanced** to set the container ID, hostname, disk, CPU, RAM, bridge, static IP, VLAN, root password, port and a public address for a reverse proxy.
 
 ### Debian, Ubuntu and other Linux systems
 
