@@ -4066,6 +4066,10 @@ input.switch:checked::before {
 .backup-status {
   margin: 16px 0 0;
 }
+.backup-estimate {
+  margin: 4px 0 14px;
+  font-size: 13px;
+}
 .backup-heading {
   margin: 22px 0 8px;
   font-size: 15px;

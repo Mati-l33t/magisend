@@ -2,6 +2,10 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+- **Backups without storage locations:** backups that include files can now leave out the files on added storage locations (a NAS), which is the default for new settings; the backup page shows how large the database, the data folder's files and each storage location are, and how much space the kept backups will take. Settings that already included files keep including everything.
+
 ## 1.0.1
 
 Security hardening.

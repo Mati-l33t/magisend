@@ -33,6 +33,12 @@ const (
 var backupName = regexp.MustCompile(`^magisend-backup-\d{8}-\d{6}\.tar$`)
 
 func migrateBackup(db *sql.DB) error {
+	// Backups that included files used to include every storage location;
+	// they keep doing so when the separate switch arrives.
+	var hadStorage int
+	if e := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('settings') WHERE name='backup_storage'").Scan(&hadStorage); e != nil {
+		return e
+	}
 	for _, c := range [][2]string{
 		{"backup_dir", "TEXT NOT NULL DEFAULT ''"},
 		{"backup_every", "INTEGER NOT NULL DEFAULT 0"},
@@ -41,8 +47,14 @@ func migrateBackup(db *sql.DB) error {
 		{"backup_last", "INTEGER NOT NULL DEFAULT 0"},
 		{"backup_error", "TEXT NOT NULL DEFAULT ''"},
 		{"backup_warning", "TEXT NOT NULL DEFAULT ''"},
+		{"backup_storage", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if e := addColumn(db, "settings", c[0], c[1]); e != nil {
+			return e
+		}
+	}
+	if hadStorage == 0 {
+		if _, e := db.Exec("UPDATE settings SET backup_storage=backup_files"); e != nil {
 			return e
 		}
 	}
@@ -56,6 +68,8 @@ type BackupSettings struct {
 	Every int  `json:"every"`
 	Keep  int  `json:"keep"`
 	Files bool `json:"files"`
+	// Also the files on added storage locations, not only the data folder's.
+	Storage bool `json:"storage"`
 }
 
 type backupState struct {
@@ -77,7 +91,7 @@ func (a *App) backupSettings() (BackupSettings, int64, string, error) {
 	var s BackupSettings
 	var last int64
 	var failure string
-	e := a.db.QueryRow("SELECT backup_dir,backup_every,backup_keep,backup_files,backup_last,backup_error FROM settings WHERE id=1").Scan(&s.Dir, &s.Every, &s.Keep, &s.Files, &last, &failure)
+	e := a.db.QueryRow("SELECT backup_dir,backup_every,backup_keep,backup_files,backup_storage,backup_last,backup_error FROM settings WHERE id=1").Scan(&s.Dir, &s.Every, &s.Keep, &s.Files, &s.Storage, &last, &failure)
 	return s, last, failure, e
 }
 
@@ -173,11 +187,13 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 	items := []item{{"magisend.sqlite", snapshot}}
 	if s.Files {
 		locations := []string{localLocation}
-		a.stores.mu.RLock()
-		for id := range a.stores.locations {
-			locations = append(locations, id)
+		if s.Storage {
+			a.stores.mu.RLock()
+			for id := range a.stores.locations {
+				locations = append(locations, id)
+			}
+			a.stores.mu.RUnlock()
 		}
-		a.stores.mu.RUnlock()
 		for _, loc := range locations {
 			blobs, e := a.blobDir(loc)
 			if e != nil {
@@ -313,6 +329,50 @@ func (a *App) finishBackup() {
 	}
 }
 
+type locationSize struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	Online bool   `json:"online"`
+}
+
+type backupSize struct {
+	Database  int64          `json:"database"`
+	Local     int64          `json:"local"`
+	Locations []locationSize `json:"locations"`
+}
+
+// backupSizes tells the administrator how large a backup gets with and
+// without files, from what MagiSend stores.
+func (a *App) backupSizes() (backupSize, error) {
+	sizes := backupSize{Locations: []locationSize{}}
+	if info, e := os.Stat(filepath.Join(a.root, "magisend.sqlite")); e == nil {
+		sizes.Database = info.Size()
+	}
+	rows, e := a.db.Query("SELECT f.backend,COALESCE(SUM(c.size),0) FROM storage_charges c JOIN files f ON f.id=c.file_id GROUP BY f.backend")
+	if e != nil {
+		return sizes, e
+	}
+	stored := map[string]int64{}
+	for rows.Next() {
+		var loc string
+		var size int64
+		if e = rows.Scan(&loc, &size); e != nil {
+			rows.Close()
+			return sizes, e
+		}
+		stored[loc] = size
+	}
+	rows.Close()
+	sizes.Local = stored[localLocation]
+	a.stores.mu.RLock()
+	for id, l := range a.stores.locations {
+		sizes.Locations = append(sizes.Locations, locationSize{l.Path, stored[id], l.online})
+	}
+	a.stores.mu.RUnlock()
+	sort.Slice(sizes.Locations, func(i, j int) bool { return sizes.Locations[i].Path < sizes.Locations[j].Path })
+	return sizes, nil
+}
+
 // missingSummary is the warning shown for an incomplete backup.
 func missingSummary(missing []string) string {
 	shown := missing
@@ -384,7 +444,11 @@ func (a *App) backupRoutes(m *http.ServeMux) {
 		a.backup.Unlock()
 		var warning string
 		_ = a.db.QueryRow("SELECT backup_warning FROM settings WHERE id=1").Scan(&warning)
-		respond(w, 200, map[string]any{"settings": s, "folder": a.backupDir(s), "last": last, "error": failure, "warning": warning, "state": state, "backups": listBackups(a.backupDir(s))})
+		sizes, e := a.backupSizes()
+		if internal(w, e) {
+			return
+		}
+		respond(w, 200, map[string]any{"settings": s, "folder": a.backupDir(s), "last": last, "error": failure, "warning": warning, "state": state, "sizes": sizes, "backups": listBackups(a.backupDir(s))})
 	})
 	m.HandleFunc("PUT /api/admin/backups", func(w http.ResponseWriter, r *http.Request) {
 		var b BackupSettings
@@ -401,7 +465,8 @@ func (a *App) backupRoutes(m *http.ServeMux) {
 			return
 		}
 		b.Dir = dir
-		if internal(w, exec(a, "UPDATE settings SET backup_dir=?,backup_every=?,backup_keep=?,backup_files=? WHERE id=1", b.Dir, b.Every, b.Keep, b.Files)) {
+		b.Storage = b.Storage && b.Files
+		if internal(w, exec(a, "UPDATE settings SET backup_dir=?,backup_every=?,backup_keep=?,backup_files=?,backup_storage=? WHERE id=1", b.Dir, b.Every, b.Keep, b.Files, b.Storage)) {
 			return
 		}
 		a.audit(r, admin.Username, "settings.backup", "")

@@ -37,9 +37,13 @@ func readBackup(t *testing.T, dir string) map[string][]byte {
 	}
 }
 
-func backUp(t *testing.T, a *App, token, dir string) {
+func backUp(t *testing.T, a *App, token, dir string, storage ...bool) {
 	t.Helper()
-	folderCall(t, a, token, "PUT", "/api/admin/backups", `{"dir":"`+dir+`","every":0,"keep":3,"files":true}`, 200)
+	settings := `{"dir":"` + dir + `","every":0,"keep":3,"files":true,"storage":false}`
+	if len(storage) > 0 && storage[0] {
+		settings = `{"dir":"` + dir + `","every":0,"keep":3,"files":true,"storage":true}`
+	}
+	folderCall(t, a, token, "PUT", "/api/admin/backups", settings, 200)
 	folderCall(t, a, token, "POST", "/api/admin/backups", `{}`, 202)
 	waitForBackup(t, a)
 }
@@ -123,7 +127,7 @@ func TestIncompleteBackupSaysWhatIsMissing(t *testing.T) {
 	a.stores.locations[id].online = false
 	a.stores.mu.Unlock()
 	dir := filepath.Join(t.TempDir(), "backups")
-	backUp(t, a, token, dir)
+	backUp(t, a, token, dir, true)
 	var state struct {
 		Error   string `json:"error"`
 		Warning string `json:"warning"`
@@ -140,9 +144,52 @@ func TestIncompleteBackupSaysWhatIsMissing(t *testing.T) {
 	a.stores.mu.Lock()
 	a.stores.locations[id].online = true
 	a.stores.mu.Unlock()
-	backUp(t, a, token, dir)
+	backUp(t, a, token, dir, true)
 	json.Unmarshal(call(a, "GET", "/api/admin/backups", "", token).Body.Bytes(), &state)
 	if state.Warning != "" {
 		t.Fatal("warning kept", state.Warning)
+	}
+}
+
+// By default only the data folder's files are backed up; files on added
+// storage locations only when asked, and the page shows how large each is.
+func TestBackupCanLeaveOutStorageLocations(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	local := libraryUpload(t, a, token, "", "local.txt", "on the data disk").Files[0].ID
+	share := t.TempDir()
+	id := addStorage(t, a, token, share)
+	folderCall(t, a, token, "PUT", "/api/admin/storage/active", `{"id":"`+id+`"}`, 200)
+	remote := libraryUpload(t, a, token, "", "nas.txt", "on the nas").Files[0].ID
+	dir := filepath.Join(t.TempDir(), "backups")
+
+	backUp(t, a, token, dir)
+	contents := readBackup(t, dir)
+	if _, ok := contents["files/local/"+local]; !ok {
+		t.Fatal("local file missing")
+	}
+	if _, ok := contents["files/"+id+"/"+remote]; ok {
+		t.Fatal("a storage location's file was included without being asked for")
+	}
+	var state struct {
+		Settings BackupSettings `json:"settings"`
+		Sizes    backupSize     `json:"sizes"`
+	}
+	json.Unmarshal(call(a, "GET", "/api/admin/backups", "", token).Body.Bytes(), &state)
+	if state.Settings.Storage || state.Sizes.Local != int64(len("on the data disk")) || state.Sizes.Database == 0 ||
+		len(state.Sizes.Locations) != 1 || state.Sizes.Locations[0].Path != share || state.Sizes.Locations[0].Size != int64(len("on the nas")) {
+		t.Fatal(state)
+	}
+
+	backUp(t, a, token, dir, true)
+	if string(readBackup(t, dir)["files/"+id+"/"+remote]) != "on the nas" {
+		t.Fatal("the storage location's file was not included when asked for")
+	}
+	// Without files, storage locations are off too.
+	folderCall(t, a, token, "PUT", "/api/admin/backups", `{"dir":"`+dir+`","every":0,"keep":3,"files":false,"storage":true}`, 200)
+	json.Unmarshal(call(a, "GET", "/api/admin/backups", "", token).Body.Bytes(), &state)
+	if state.Settings.Storage {
+		t.Fatal("storage kept without files")
 	}
 }

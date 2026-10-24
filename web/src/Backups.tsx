@@ -10,11 +10,18 @@ interface BackupSettings {
   every: number;
   keep: number;
   files: boolean;
+  // Also the files on added storage locations (a NAS), not only the data folder's.
+  storage?: boolean;
 }
 interface BackupFile {
   name: string;
   size: number;
   created: number;
+}
+interface BackupSizes {
+  database: number;
+  local: number;
+  locations: { path: string; size: number; online: boolean }[];
 }
 interface BackupState {
   settings: BackupSettings;
@@ -24,6 +31,7 @@ interface BackupState {
   // Set when the last backup finished but could not copy everything.
   warning?: string;
   state: { running: boolean; done: number; total: number };
+  sizes?: BackupSizes;
   backups: BackupFile[];
 }
 
@@ -89,6 +97,13 @@ export function BackupPanel() {
       </section>
     );
   const running = state.state;
+  const sizes = state.sizes;
+  // How large one backup gets with the choices in the form.
+  const estimate = sizes
+    ? sizes.database +
+      (form.files ? sizes.local : 0) +
+      (form.files && form.storage ? sizes.locations.reduce((sum, l) => sum + l.size, 0) : 0)
+    : 0;
   return (
     <section className="panel admin-wide">
       <h2>
@@ -135,16 +150,62 @@ export function BackupPanel() {
             onChange={(e) => setForm({ ...form, keep: Math.round(Number(e.target.value)) })}
           />
         </SettingRow>
-        <SettingRow id="backup-files" label={t('backup.files')} hint={t('backup.filesHint')}>
+        <SettingRow
+          id="backup-files"
+          label={t('backup.files')}
+          hint={
+            sizes
+              ? t('backup.filesSized', { size: formatBytes(sizes.local) })
+              : t('backup.filesHint')
+          }
+        >
           <input
             id="backup-files"
             aria-describedby="backup-files-hint"
             type="checkbox"
             className="switch"
             checked={form.files}
-            onChange={(e) => setForm({ ...form, files: e.target.checked })}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                files: e.target.checked,
+                storage: e.target.checked && form.storage,
+              })
+            }
           />
         </SettingRow>
+        {form.files && sizes && sizes.locations.length > 0 && (
+          <SettingRow
+            id="backup-storage"
+            label={t('backup.storage')}
+            hint={t('backup.storageHint', {
+              locations: sizes.locations
+                .map(
+                  (l) =>
+                    `${l.path} (${formatBytes(l.size)}${l.online ? '' : ', ' + t('backup.offline')})`,
+                )
+                .join(', '),
+            })}
+          >
+            <input
+              id="backup-storage"
+              aria-describedby="backup-storage-hint"
+              type="checkbox"
+              className="switch"
+              checked={!!form.storage}
+              onChange={(e) => setForm({ ...form, storage: e.target.checked })}
+            />
+          </SettingRow>
+        )}
+        {sizes && (
+          <p className="muted backup-estimate" role="status">
+            {t('backup.estimate', {
+              size: formatBytes(estimate),
+              total: formatBytes(estimate * Math.max(1, form.keep || 1)),
+              keep: formatNumber(Math.max(1, form.keep || 1)),
+            })}
+          </p>
+        )}
         {error && (
           <div role="alert" className="error">
             {error}
