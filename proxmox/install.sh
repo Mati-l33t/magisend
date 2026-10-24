@@ -266,12 +266,6 @@ main() {
   pct exec "$CTID" -- getent hosts github.com > /dev/null 2>&1 || die "Container has no internet access"
   ok "Network ready"
 
-  # Without a password the console signs in by itself; the console's login
-  # prompt is restarted so the change applies right away.
-  if [ -z "$PASSWORD" ]; then
-    ct bash -c 'mkdir -p /etc/systemd/system/container-getty@1.service.d && printf "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin root --noclear --keep-baud tty%%I 115200,38400,9600 \$TERM\n" > /etc/systemd/system/container-getty@1.service.d/override.conf && systemctl daemon-reload && systemctl restart container-getty@1.service'
-  fi
-
   info "Installing MagiSend (this takes about a minute)"
   ct bash -c "apt-get update -qq && apt-get -y -qq upgrade > /dev/null && apt-get install -y -qq curl ca-certificates locales > /dev/null" ||
     die "Package installation failed"
@@ -283,6 +277,13 @@ main() {
     bash -c "curl -fsSL '$INSTALLER' | bash" || die "MagiSend installation failed (see above)"
 
   login_info
+
+  # Without a password the console signs in by itself. This comes last and
+  # restarts the console's login prompt, so the session it opens already shows
+  # the greeting.
+  if [ -z "$PASSWORD" ]; then
+    ct bash -c 'mkdir -p /etc/systemd/system/container-getty@1.service.d && printf "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin root --noclear --keep-baud tty%%I 115200,38400,9600 \$TERM\n" > /etc/systemd/system/container-getty@1.service.d/override.conf && systemctl daemon-reload && systemctl restart container-getty@1.service'
+  fi
 
   local ip
   ip=$(pct exec "$CTID" -- hostname -I 2> /dev/null | awk '{print $1}')
