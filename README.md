@@ -55,7 +55,8 @@
 - **Installable app (PWA)** on phones, tablets and desktops — including sharing files straight from the phone's share menu.
 - **Your own branding** — name, accent color and logo for the whole interface, public pages and emails. Four looks, dark and light.
 - **English and Swedish.** Adding a language is a single file.
-- **Small and private** — a single binary with SQLite built in. No telemetry, no external services.
+- **Lightweight** — one program with SQLite built in, a 7 MB download. MagiSend uses about 20 MB of memory and no CPU while idle; a complete Proxmox container runs it in about 60 MB of RAM and 800 MB of disk.
+- **Private** — no telemetry and no tracking. Your files never leave your server; the only outside contacts are the update check (which can be turned off) and email or push notifications you set up yourself.
 
 <p align="center">
   <img src="docs/screenshots/looks.png" width="100%" alt="Four looks: Aurora, Classic, Refined and Studio, in dark and light" />

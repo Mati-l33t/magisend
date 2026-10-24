@@ -18,6 +18,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
+COPY internal ./internal
 COPY web/backend-errors-contract.json web/
 COPY --from=web /src/web/dist web/dist
 ARG VERSION=dev
