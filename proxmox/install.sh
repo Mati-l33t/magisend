@@ -25,6 +25,12 @@ die() {
   exit 1
 }
 
+# Runs a command in the new container. The host's language setting is not
+# carried in, because the container has no such locale yet.
+ct() {
+  pct exec "$CTID" -- env LANG=C.UTF-8 LC_ALL=C.UTF-8 DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none "$@"
+}
+
 header() {
   clear 2> /dev/null || true
   echo -e "${OR}${BOLD}"
@@ -132,8 +138,19 @@ advanced() {
   fi
   VLAN=$(ask "VLAN" "VLAN tag (leave empty for none):" "") || die "Cancelled"
   [ -z "$VLAN" ] || [[ $VLAN =~ ^[0-9]+$ ]] || die "Invalid VLAN tag"
-  PASSWORD=$(whiptail --backtitle "$TITLE" --title "ROOT PASSWORD" --passwordbox \
-    "Root password for the container (leave empty for console autologin):" 10 64 3>&1 1>&2 2>&3) || die "Cancelled"
+  local again
+  while true; do
+    PASSWORD=$(whiptail --backtitle "$TITLE" --title "ROOT PASSWORD" --passwordbox \
+      "Root password for the container, at least 5 characters.\nLeave empty to sign in on the console automatically." 11 64 3>&1 1>&2 2>&3) || die "Cancelled"
+    [ -z "$PASSWORD" ] && break
+    if [ ${#PASSWORD} -lt 5 ] || [[ $PASSWORD == *" "* ]]; then
+      whiptail --backtitle "$TITLE" --title "ROOT PASSWORD" --msgbox "Use at least 5 characters and no spaces." 8 50
+      continue
+    fi
+    again=$(whiptail --backtitle "$TITLE" --title "ROOT PASSWORD" --passwordbox "Type the password again:" 10 64 3>&1 1>&2 2>&3) || die "Cancelled"
+    [ "$PASSWORD" = "$again" ] && break
+    whiptail --backtitle "$TITLE" --title "ROOT PASSWORD" --msgbox "The passwords did not match. Try again." 8 50
+  done
   value=$(ask "PORT" "Port MagiSend listens on:" "$PORT") || die "Cancelled"
   [[ $value =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] && [ "$value" -le 65535 ] || die "Invalid port"
   PORT=$value
@@ -175,7 +192,7 @@ notes() {
   cat << NOTES
 <div align='center'>
   <a href='https://github.com/$REPO' target='_blank' rel='noopener noreferrer'>
-    <img src='https://raw.githubusercontent.com/$REPO/main/web/public/logo.png' alt='MagiSend' style='width:96px;height:96px;'/>
+    <img src='https://raw.githubusercontent.com/$REPO/main/proxmox/logo.png' alt='MagiSend' width='96' height='96'/>
   </a>
   <h2 style='font-size: 24px; margin: 20px 0;'>MagiSend LXC</h2>
   <p style='margin: 16px 0;'>
@@ -232,10 +249,12 @@ main() {
   net="name=eth0,bridge=$BRIDGE,ip=$NET"
   [ -n "$GATEWAY" ] && net+=",gw=$GATEWAY"
   [ -n "$VLAN" ] && net+=",tag=$VLAN"
+  local password=()
+  [ -n "$PASSWORD" ] && password=(--password "$PASSWORD")
   info "Creating container $CTID"
   pct create "$CTID" "$tmpl" --hostname "$HOSTNAME_" --cores "$CORES" --memory "$RAM" --swap 512 \
     --rootfs "$cstore:$DISK" --net0 "$net" --unprivileged 1 --features nesting=1 --onboot 1 \
-    --ostype debian --description "$(notes)" > /dev/null || die "Container creation failed"
+    --ostype debian --description "$(notes)" "${password[@]}" > /dev/null || die "Container creation failed"
   pct start "$CTID"
   ok "Container $CTID started"
 
@@ -247,16 +266,20 @@ main() {
   pct exec "$CTID" -- getent hosts github.com > /dev/null 2>&1 || die "Container has no internet access"
   ok "Network ready"
 
-  if [ -n "$PASSWORD" ]; then
-    printf 'root:%s\n' "$PASSWORD" | pct exec "$CTID" -- chpasswd
-  else
-    pct exec "$CTID" -- bash -c 'mkdir -p /etc/systemd/system/container-getty@1.service.d && printf "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin root --noclear --keep-baud tty%%I 115200,38400,9600 \$TERM\n" > /etc/systemd/system/container-getty@1.service.d/override.conf && systemctl daemon-reload'
+  # Without a password the console signs in by itself; the console's login
+  # prompt is restarted so the change applies right away.
+  if [ -z "$PASSWORD" ]; then
+    ct bash -c 'mkdir -p /etc/systemd/system/container-getty@1.service.d && printf "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin root --noclear --keep-baud tty%%I 115200,38400,9600 \$TERM\n" > /etc/systemd/system/container-getty@1.service.d/override.conf && systemctl daemon-reload && systemctl restart container-getty@1.service'
   fi
 
   info "Installing MagiSend (this takes about a minute)"
-  pct exec "$CTID" -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get -y -qq upgrade > /dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates > /dev/null" ||
+  ct bash -c "apt-get update -qq && apt-get -y -qq upgrade > /dev/null && apt-get install -y -qq curl ca-certificates locales > /dev/null" ||
     die "Package installation failed"
-  pct exec "$CTID" -- env MAGISEND_PORT="$PORT" MAGISEND_PUBLIC_URL="$PUBLIC_URL" MAGISEND_TRUSTED_PROXIES="$PROXIES" \
+  # An English UTF-8 locale, so programs in the container stop warning about
+  # the language setting a terminal brings along.
+  ct bash -c "sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen > /dev/null 2>&1 && update-locale LANG=en_US.UTF-8" ||
+    die "Locale setup failed"
+  ct env MAGISEND_PORT="$PORT" MAGISEND_PUBLIC_URL="$PUBLIC_URL" MAGISEND_TRUSTED_PROXIES="$PROXIES" \
     bash -c "curl -fsSL '$INSTALLER' | bash" || die "MagiSend installation failed (see above)"
 
   login_info
