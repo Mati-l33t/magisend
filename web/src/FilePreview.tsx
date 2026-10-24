@@ -26,6 +26,8 @@ const CodeView = lazy(() => import('./CodeView'));
 const maxBytes = 20 * 1024 * 1024;
 // Large phone photos (up to 200 MP) are JPEGs the server sends as they are.
 const maxImageBytes = 64 * 1024 * 1024;
+const maxPixels = 16_000_000;
+const maxJPEGPixels = 200_000_000;
 
 // Which viewer a file name suggests; the server checks the actual content.
 export type PreviewKind = 'image' | 'pdf' | 'video' | 'audio' | 'text' | 'document' | 'sheet';
@@ -113,6 +115,8 @@ export default function FilePreview({
   const dialog = useRef<HTMLDialogElement>(null);
   const objectURL = useRef<string | null>(null);
   const [source, setSource] = useState('');
+  // The checked type of the picture shown, which decides its size limit.
+  const sourceType = useRef('');
   const [text, setText] = useState<string | null>(null);
   const markdown = /\.(md|markdown)$/i.test(file.name);
   const [formatted, setFormatted] = useState(true);
@@ -245,6 +249,7 @@ export default function FilePreview({
         }
         url = URL.createObjectURL(blob);
         objectURL.current = url;
+        sourceType.current = type;
         setSource(url);
       } catch (e) {
         if (active && !controller.signal.aborted) setError(e as Error);
@@ -388,7 +393,8 @@ export default function FilePreview({
             onError={rejectImage}
             onLoad={(event) => {
               const image = event.currentTarget;
-              if (image.naturalWidth * image.naturalHeight > 16000000) rejectImage();
+              const limit = sourceType.current === 'image/jpeg' ? maxJPEGPixels : maxPixels;
+              if (image.naturalWidth * image.naturalHeight > limit) rejectImage();
               else setNatural({ width: image.naturalWidth, height: image.naturalHeight });
             }}
           />
