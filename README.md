@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/icons/icon-192.png" width="96" height="96" alt="MagiSend logo" />
+  <img src="web/public/logo.png" width="112" height="112" alt="MagiSend logo" />
 </p>
 
 <h1 align="center">MagiSend</h1>
@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/library.png" width="760" alt="File library" />
+  <img src="docs/screenshots/library.png" width="100%" alt="The file library" />
 </p>
 
 ## Features
@@ -58,23 +58,25 @@
 - **Small and private** — a single binary with SQLite built in. No telemetry, no external services.
 
 <p align="center">
-  <img src="docs/screenshots/send.png" width="49%" alt="Sending files (light theme)" />
+  <img src="docs/screenshots/looks.png" width="100%" alt="Four looks: Aurora, Classic, Refined and Studio, in dark and light" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/send.png" width="49%" alt="Sending files" />
   <img src="docs/screenshots/admin.png" width="49%" alt="Administration" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/notes.png" width="62%" alt="Notes" />
-  <img src="docs/screenshots/share-mobile.png" width="22%" alt="A shared link on a phone" />
+  <img src="docs/screenshots/phones.png" width="100%" alt="A shared link, notes and the library on phones" />
 </p>
 
 <details>
 <summary><strong>More screenshots</strong></summary>
 <br />
 <p align="center">
-  <img src="docs/screenshots/ready.png" width="49%" alt="A link ready to share, with QR code" />
-  <img src="docs/screenshots/viewer.png" width="49%" alt="Gallery viewer" />
+  <img src="docs/screenshots/notes.png" width="100%" alt="Notes with checklists" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/notes-mobile.png" width="260" alt="Notes on a phone" />
+  <img src="docs/screenshots/ready.png" width="49%" alt="A link ready to share, with QR code" />
+  <img src="docs/screenshots/viewer.png" width="49%" alt="Gallery viewer" />
 </p>
 </details>
 
