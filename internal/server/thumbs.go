@@ -366,10 +366,13 @@ func (a *App) thumbnailWith(w http.ResponseWriter, r *http.Request, authorize fu
 		fail(w, 404, "thumbnail_unavailable")
 		return
 	}
-	release, ok := a.acquireDownload(w, r)
-	if !ok {
+	// A thumbnail is a few kilobytes already in memory: it takes a shared slot
+	// but not one of the visitor's own, so a page with many pictures shows
+	// them all.
+	if !acquire(w, a.downloads) {
 		return
 	}
+	release := func() { <-a.downloads }
 	defer release()
 	contentType := "image/jpeg"
 	if format == "png" {

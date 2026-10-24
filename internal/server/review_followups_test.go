@@ -2,6 +2,8 @@ package server
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -245,5 +247,32 @@ func TestExtractionFilesAreGuarded(t *testing.T) {
 	a.mu.Unlock()
 	if w := chunk(a, token, sh.Files[0].ID, 0, "abc"); w.Code != 200 {
 		t.Fatal("ordinary uploads stopped working", w.Code, w.Body)
+	}
+}
+
+// Many thumbnails at once from one visitor are not limited per visitor.
+func TestThumbnailsSkipThePerVisitorLimit(t *testing.T) {
+	a := testApp(t)
+	var releases []func()
+	for i := 0; i < downloadsPerClient; i++ {
+		release, _ := a.acquireDownload(httptest.NewRecorder(), fetchRequest("198.51.100.30:1"))
+		releases = append(releases, release)
+	}
+	setupAdmin(t, a)
+	owner := login(t, a, "mati")
+	sh := createShare(t, a, owner, "", 3)
+	chunk(a, owner, sh.Files[0].ID, 0, "abc")
+	call(a, "POST", "/api/shares/"+sh.ID+"/publish", "{}", owner)
+	a.db.Exec("INSERT INTO thumbnails(file_id,data,format) VALUES(?,?,?)", sh.Files[0].ID, []byte("tiny"), "jpeg")
+	r := httptest.NewRequest("GET", "/api/shares/"+sh.ID+"/files/"+sh.Files[0].ID+"/thumbnail", nil)
+	r.RemoteAddr = "198.51.100.30:1"
+	r.AddCookie(&http.Cookie{Name: "magisend_session", Value: owner})
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, r)
+	if w.Code == 429 {
+		t.Fatal("a thumbnail was refused by the per-visitor limit")
+	}
+	for _, release := range releases {
+		release()
 	}
 }
