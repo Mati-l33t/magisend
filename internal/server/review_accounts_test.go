@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The rate limiter never keeps a request's huge "username" around.
@@ -145,11 +146,20 @@ func TestRightSharePasswordIsNeverLockedOut(t *testing.T) {
 		a.Handler().ServeHTTP(w, r)
 		return w.Code
 	}
-	for i := 0; i < unlockFailuresPerShare+5; i++ {
+	delay := unlockThrottleDelay
+	unlockThrottleDelay = 50 * time.Millisecond
+	t.Cleanup(func() { unlockThrottleDelay = delay })
+	for i := 0; i < unlockFailuresPerShare; i++ {
 		unlock(fmt.Sprintf("198.51.100.%d", i%250+1), "wrong")
 	}
-	if got := unlock("198.51.100.200", "wrong"); got != 429 && got != 401 {
+	// Past the link-wide count, every check waits for a turn: guesses from
+	// many addresses are slowed, never answered faster.
+	start := time.Now()
+	if got := unlock("198.51.100.200", "wrong"); got != 401 {
 		t.Fatal(got)
+	}
+	if time.Since(start) < unlockThrottleDelay {
+		t.Fatal("a guess past the link-wide count was not slowed down")
 	}
 	if got := unlock("203.0.113.7", "share-password"); got != 200 {
 		t.Fatal("the right password was refused", got)

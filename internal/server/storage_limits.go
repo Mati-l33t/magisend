@@ -3,13 +3,17 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // Links people create. Library uploads are stored as hidden containers and
@@ -130,15 +134,19 @@ func (a *App) isDeleting(id string) bool {
 // Deleting rows may already have lost blobs; main's existing startup cleanup
 // retries them. Other committed bytes must exist before accepting requests.
 func (a *App) verifyCommittedStorage() error {
-	missing, wrong, e := a.checkStoredFiles()
+	files, e := a.storedFiles()
 	if e != nil {
 		return e
 	}
-	if len(wrong) > 0 {
-		return fmt.Errorf("none of the expected files are in %s and it has no MagiSend index: is the right disk or share mounted?", strings.Join(wrong, ", "))
+	c := a.checkStored(files)
+	if len(c.wrong) > 0 {
+		return fmt.Errorf("none of the expected files are in %s and it has no MagiSend index: is the right disk or share mounted?", strings.Join(c.wrong, ", "))
 	}
-	if len(missing) > 0 {
-		log.Printf("storage: %d stored files are missing or damaged; see Administration → Storage", len(missing))
+	if len(c.unreachable) > 0 {
+		log.Printf("storage: %s did not answer; its files are checked when they are read", strings.Join(c.unreachable, ", "))
+	}
+	if len(c.missing) > 0 {
+		log.Printf("storage: %d stored files are missing or damaged; see Administration → Storage", len(c.missing))
 	}
 	return nil
 }
@@ -154,66 +162,184 @@ type MissingFile struct {
 	Library  bool   `json:"library"`
 }
 
-// checkStoredFiles compares every committed file with its stored data in
-// the reachable locations (offline ones are checked when read). wrong lists
-// locations where none of many expected files exist and MagiSend's index is
-// missing too, which looks like an unmounted disk rather than lost files.
-func (a *App) checkStoredFiles() (missing []MissingFile, wrong []string, err error) {
-	rows, e := a.db.Query(`SELECT f.id,f.name,COALESCE(u.username,''),f.offset,f.size,f.backend,s.published,EXISTS(SELECT 1 FROM library_files l WHERE l.file_id=f.id),
+// storedFile is a committed file and where its data should be.
+type storedFile struct {
+	MissingFile
+	blob      string
+	offset    int64
+	published bool
+	dir       string
+}
+
+// storedCheck is what checkStored found. gone holds the missing files whose
+// data does not exist at all (rather than having the wrong size or being
+// unreadable). wrong lists locations where none of many expected files exist
+// and MagiSend's index is missing too, which looks like an unmounted disk
+// rather than lost files; unreachable lists those that stopped answering.
+type storedCheck struct {
+	missing     []storedFile
+	gone        map[string]bool
+	wrong       []string
+	unreachable []string
+}
+
+const storedFilesQuery = `SELECT f.id,f.name,COALESCE(u.username,''),f.offset,f.size,f.backend,s.published,EXISTS(SELECT 1 FROM library_files l WHERE l.file_id=f.id),
  COALESCE((SELECT v.blob FROM text_versions v WHERE v.file_id=f.id ORDER BY v.number DESC LIMIT 1),f.id)
  FROM files f JOIN shares s ON s.id=f.share_id LEFT JOIN users u ON u.id=s.owner
- WHERE NOT EXISTS (SELECT 1 FROM deleting d WHERE d.share_id=s.id) AND NOT EXISTS(SELECT 1 FROM file_deleting d WHERE d.file_id=f.id)`)
+ WHERE NOT EXISTS (SELECT 1 FROM deleting d WHERE d.share_id=s.id) AND NOT EXISTS(SELECT 1 FROM file_deleting d WHERE d.file_id=f.id)`
+
+// storedFiles lists the committed files whose data should be in a reachable
+// location (offline ones are checked when read). It only reads the
+// database; caller holds mu, or the app is starting.
+func (a *App) storedFiles() ([]storedFile, error) {
+	return a.queryStoredFiles(storedFilesQuery)
+}
+
+func (a *App) queryStoredFiles(query string, args ...any) ([]storedFile, error) {
+	rows, e := a.db.Query(query, args...)
 	if e != nil {
-		return nil, nil, e
+		return nil, e
 	}
 	defer rows.Close()
-	expected, found := map[string]int{}, map[string]int{}
+	var list []storedFile
 	for rows.Next() {
-		var f MissingFile
-		var blob string
-		var offset int64
-		var published bool
-		if e = rows.Scan(&f.ID, &f.Name, &f.Owner, &offset, &f.Size, &f.Location, &published, &f.Library, &blob); e != nil {
-			return nil, nil, e
+		var f storedFile
+		if e = rows.Scan(&f.ID, &f.Name, &f.Owner, &f.offset, &f.Size, &f.Location, &f.published, &f.Library, &f.blob); e != nil {
+			return nil, e
 		}
-		if !a.knownLocation(f.Location) || offset < 0 || offset > f.Size {
-			return nil, nil, fmt.Errorf("invalid committed storage metadata for %s", f.ID)
+		if !a.knownLocation(f.Location) || f.offset < 0 || f.offset > f.Size {
+			return nil, fmt.Errorf("invalid committed storage metadata for %s", f.ID)
 		}
-		if offset == 0 && !published {
+		if f.offset == 0 && !f.published {
 			continue
 		}
-		if !validToken(blob) {
-			return nil, nil, fmt.Errorf("invalid committed blob key")
+		if !validToken(f.blob) {
+			return nil, fmt.Errorf("invalid committed blob key")
 		}
 		dir, e := a.blobDir(f.Location)
 		if errors.Is(e, errStorageOffline) {
 			continue
 		}
 		if e != nil {
-			return nil, nil, e
+			return nil, e
 		}
-		expected[f.Location]++
-		info, e := os.Lstat(filepath.Join(dir, blob))
-		if e == nil {
-			found[f.Location]++
-		}
-		if e != nil || !info.Mode().IsRegular() || info.Size() < offset || (published && (offset != f.Size || info.Size() != f.Size)) {
-			missing = append(missing, f)
+		f.dir = dir
+		list = append(list, f)
+	}
+	return list, rows.Err()
+}
+
+// storedFileState is why f's data does not match it: nil when it does,
+// fs.ErrNotExist when it is not there at all.
+func storedFileState(f storedFile) (found bool, problem error) {
+	info, e := os.Lstat(filepath.Join(f.dir, f.blob))
+	if e != nil {
+		return false, e
+	}
+	if !info.Mode().IsRegular() || info.Size() < f.offset || (f.published && (f.offset != f.Size || info.Size() != f.Size)) {
+		return true, errors.New("damaged")
+	}
+	return true, nil
+}
+
+// checkStored compares files with their stored data without holding mu, one
+// location at a time in parallel. A location that stops answering (a hung
+// network share) is given up after storageCheckTimeout without progress and
+// listed as unreachable; none of its files count as missing.
+func (a *App) checkStored(files []storedFile) storedCheck {
+	c := storedCheck{gone: map[string]bool{}}
+	byLocation := map[string][]storedFile{}
+	for _, f := range files {
+		byLocation[f.Location] = append(byLocation[f.Location], f)
+	}
+	type outcome struct {
+		location string
+		missing  []storedFile
+		gone     []string
+		wrong    bool
+	}
+	done := make(chan outcome, len(byLocation))
+	progress := map[string]*atomic.Int64{}
+	for location, list := range byLocation {
+		checked := new(atomic.Int64)
+		progress[location] = checked
+		go func() {
+			o := outcome{location: location}
+			found := 0
+			for _, f := range list {
+				exists, problem := storedFileState(f)
+				checked.Add(1)
+				if exists {
+					found++
+				}
+				if problem != nil {
+					o.missing = append(o.missing, f)
+					if errors.Is(problem, fs.ErrNotExist) {
+						o.gone = append(o.gone, f.ID)
+					}
+				}
+			}
+			if found == 0 && len(list) >= 3 {
+				if _, e := os.Lstat(filepath.Join(list[0].dir, storageIndexFile)); e != nil {
+					o.wrong = true
+				}
+			}
+			done <- o
+		}()
+	}
+	type watch struct {
+		seen  int64
+		moved time.Time
+	}
+	pending := map[string]*watch{}
+	for location := range byLocation {
+		pending[location] = &watch{moved: time.Now()}
+	}
+	tick := time.NewTicker(storageCheckTimeout / 6)
+	defer tick.Stop()
+	for len(pending) > 0 {
+		select {
+		case o := <-done:
+			if pending[o.location] == nil {
+				continue
+			}
+			delete(pending, o.location)
+			c.missing = append(c.missing, o.missing...)
+			for _, id := range o.gone {
+				c.gone[id] = true
+			}
+			if o.wrong {
+				c.wrong = append(c.wrong, a.locationLabel(o.location))
+			}
+		case now := <-tick.C:
+			for location, w := range pending {
+				if n := progress[location].Load(); n != w.seen {
+					w.seen, w.moved = n, now
+				} else if now.Sub(w.moved) > storageCheckTimeout {
+					delete(pending, location)
+					c.unreachable = append(c.unreachable, a.locationLabel(location))
+				}
+			}
 		}
 	}
-	if e = rows.Err(); e != nil {
-		return nil, nil, e
+	sort.Slice(c.missing, func(i, j int) bool { return c.missing[i].ID < c.missing[j].ID })
+	sort.Strings(c.wrong)
+	sort.Strings(c.unreachable)
+	return c
+}
+
+// stillGone reports whether f is still committed with the same data in the
+// same place and that data still does not exist. Caller holds mu; the check
+// gives up (false) when the location does not answer in time.
+func (a *App) stillGone(f storedFile) bool {
+	now, e := a.queryStoredFiles(storedFilesQuery+" AND f.id=?", f.ID)
+	if e != nil || len(now) != 1 || now[0].Location != f.Location || now[0].blob != f.blob || now[0].dir != f.dir {
+		return false
 	}
-	for loc, n := range expected {
-		if found[loc] > 0 || n < 3 {
-			continue
-		}
-		dir, _ := a.blobDir(loc)
-		if _, e := os.Lstat(filepath.Join(dir, storageIndexFile)); e != nil {
-			wrong = append(wrong, a.locationLabel(loc))
-		}
-	}
-	return missing, wrong, nil
+	return timed(func() bool {
+		_, problem := storedFileState(now[0])
+		return errors.Is(problem, fs.ErrNotExist)
+	}, false)
 }
 
 // metadataRoom reports whether owner may add one more link (when link is

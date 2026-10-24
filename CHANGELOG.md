@@ -2,6 +2,19 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## 1.0.7
+
+Fixes from a second review, of the 1.0.6 fixes themselves.
+
+- **Updates:** a second stop signal while the updater puts the previous version back can no longer remove the restored database; a database copy that fails partway stops the update before anything changes; a file store moved elsewhere behind a link no longer blocks updates. Docker images now hold the release's own binaries, used only after their signature and checksums are verified, and `latest` moves only for the newest release.
+- **Restores:** a database-only restore starts even when earlier text versions are gone; the installation's ID is kept outside the database, so a restored database keeps its backups; archives from before installation IDs are pruned like the rest.
+- **Storage:** missing files are checked without holding up the app, and a share that stops answering is skipped; nothing is removed from a location that looks like the wrong disk, only library files whose data is really gone are removed, and files in links are shown apart.
+- **Backups:** a database copy whose permissions the folder cannot keep (CIFS, exFAT) no longer fails the backup; progress counts in every step, so long file listings are not given up; a given-up run stops instead of running alongside the next; deletions held for a backup never hang the app on a share; MagiSend waits for a running backup when it stops.
+- **Sign-ins:** many wrong passwords for a link or request from many addresses now slow every check down instead of only changing the answer; a new password, a reset or a disabled account ends the pass known browsers had past the account-wide sign-in limit; password-reset requests do the same work whether or not an account matched.
+- **Uploads with API tokens** reserve space as data arrives instead of the whole remaining quota.
+- **Photo location:** TIFF and DNG files are cleaned where their directories point, without reading the whole file, every directory in the chain is checked, BigTIFF is refused, and PNG raw Exif profiles are replaced even when not compressed; replacing a file cleans it only once the replacement is allowed, and a photo that cannot be cleaned is refused with the right message.
+- **Email settings:** clearing the web address uses this server's own address again rather than the old one.
+
 ## 1.0.6
 
 Fixes from a full review of the code.

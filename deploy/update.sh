@@ -85,9 +85,12 @@ healthy() { # wait until the service answers and runs the expected version
 recover() { # reason
   set +e
   trap - ERR
+  # A second signal must not run this again halfway: the snapshot is gone
+  # once it is put back.
+  trap "" TERM INT HUP
   echo "==> $1, restoring ${FROM:-the previous version}" >&2
   systemctl stop "$SERVICE"
-  if [ "$INSTALLED" = 1 ] && [ "$SNAPSHOT_DONE" = 1 ]; then
+  if [ "$INSTALLED" = 1 ] && [ "$SNAPSHOT_DONE" = 1 ] && [ -f "$SNAPSHOT/magisend.sqlite" ]; then
     install -m 0755 "$SNAPSHOT/magisend" "$APP_DIR/magisend"
     # Only the exact files that were saved go back. Whatever now has their
     # names (a link or a folder the app made, say) is removed first, so root
@@ -101,6 +104,8 @@ recover() { # reason
       mv -- "$SNAPSHOT/blobs" "$DATA/blobs"
     fi
   fi
+  INSTALLED=0
+  SNAPSHOT_DONE=0
   rm -rf "$SNAPSHOT"
   systemctl start "$SERVICE"
   if healthy "$FROM"; then
@@ -113,7 +118,7 @@ recover() { # reason
 unexpected() { # line, or "signal"
   local reason="Unexpected error at line $1"
   [ "$1" = signal ] && reason="The update was stopped"
-  trap - TERM INT HUP
+  trap "" TERM INT HUP
   if [ "$STOPPED" = 1 ]; then
     recover "$reason"
   fi
@@ -191,12 +196,18 @@ save_database() {
     if [ -L "$DATA/$f" ] || { [ -e "$DATA/$f" ] && [ ! -f "$DATA/$f" ]; }; then
       return 1
     fi
-    [ -f "$DATA/$f" ] && cp -p -- "$DATA/$f" "$SNAPSHOT/$f"
+    if [ -f "$DATA/$f" ]; then
+      cp -p -- "$DATA/$f" "$SNAPSHOT/$f" || return 1
+    fi
   done
-  return 0
+  [ -f "$SNAPSHOT/magisend.sqlite" ]
 }
 snapshot_files() {
-  [ -d "$DATA/blobs" ] && [ ! -L "$DATA/blobs" ] || return 1
+  # A file store moved elsewhere behind a link is left as it is, like one on
+  # another file system.
+  [ -L "$DATA/blobs" ] && return 0
+  [ -e "$DATA/blobs" ] || return 0
+  [ -d "$DATA/blobs" ] || return 1
   [ "$(stat -c %d "$DATA/blobs")" = "$(stat -c %d "$STATE")" ] || return 0
   cp -al -- "$DATA/blobs" "$SNAPSHOT/blobs"
 }
@@ -225,6 +236,8 @@ for unit in magisend.service magisend-update.service magisend-update.path; do
 done
 systemctl daemon-reload
 echo "$TO" > "$APP_DIR/.magisend-release"
-rm -rf "$SNAPSHOT"
+# From here on the new version stays: a signal must not roll it back.
+trap "" TERM INT HUP
 trap - ERR
+rm -rf "$SNAPSHOT"
 status success "Updated to $TO"

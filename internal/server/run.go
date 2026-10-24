@@ -116,14 +116,16 @@ func Main(buildVersion string, ui fs.FS, errorCatalog []byte) {
 	server := &http.Server{Addr: env("MAGISEND_LISTEN", "0.0.0.0:8080"), Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 2 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	// On a stop signal, requests in progress get up to 15 seconds to finish
 	// before the database closes; ListenAndServe returns as soon as the
-	// shutdown begins, so Main waits for it to end. A backup that is cut off
-	// leaves files the next backup removes.
+	// shutdown begins, so Main waits for it to end. A running backup stops at
+	// its next step and is waited for too.
 	drained := make(chan struct{})
 	go func() {
 		<-ctx.Done()
+		a.stopping.Store(true)
 		c, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		server.Shutdown(c)
+		a.waitBackup(15 * time.Second)
 		close(drained)
 	}()
 	log.Printf("MagiSend %s listening on %s", version, server.Addr)

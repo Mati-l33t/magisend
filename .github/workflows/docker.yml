@@ -1,8 +1,10 @@
 name: Docker
 
 # The image is built only once a release is published, which happens after
-# the maintainer has signed it (see the Release workflow), and only for a
-# release that carries its signature.
+# the maintainer has signed it (see the Release workflow). It holds the
+# release's own binaries, used only after their signature (by the release key
+# kept off GitHub) and checksums are verified, never a fresh build. The
+# latest and major.minor tags move only for the newest release.
 on:
   release:
     types: [published]
@@ -24,16 +26,39 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - name: Check the release is published and signed
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - name: Verify the signed release binaries
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $TAG"; exit 1; }
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets \
-            --jq 'select(.isDraft == false) | .assets[].name' | grep -qx SHA256SUMS.sig
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ env.TAG }}
+          [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = false ] ||
+            { echo "$TAG is not a published release"; exit 1; }
+          work=$(mktemp -d)
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$work" \
+            --pattern SHA256SUMS --pattern SHA256SUMS.sig --pattern 'magisend_*_linux_*.tar.gz'
+          # The public half of the release key; the private half never is on GitHub.
+          cat > "$work/release.pub" <<'KEY'
+          -----BEGIN PUBLIC KEY-----
+          MCowBQYDK2VwAyEAmwQ+AfwwjYrkLcEkTQW5Yw2qRY2gss/dC7ourfTQe7E=
+          -----END PUBLIC KEY-----
+          KEY
+          sed -i 's/^ *//' "$work/release.pub"
+          base64 -d "$work/SHA256SUMS.sig" > "$work/sig.bin"
+          openssl pkeyutl -verify -pubin -inkey "$work/release.pub" -rawin \
+            -in "$work/SHA256SUMS" -sigfile "$work/sig.bin"
+          for arch in amd64 arm64; do
+            name="magisend_${TAG#v}_linux_${arch}"
+            (cd "$work" && grep -E "  $name\.tar\.gz$" SHA256SUMS | sha256sum -c --strict)
+            tar -xzf "$work/$name.tar.gz" -C "$work"
+            install -D -m 0755 "$work/$name/magisend" "release-bin/linux-$arch/magisend"
+          done
+          [ "$(release-bin/linux-amd64/magisend --version)" = "$TAG" ]
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          echo "latest=$([ "$latest" = "$TAG" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -47,15 +72,14 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/magisend
           tags: |
             type=semver,pattern={{version}},value=${{ env.TAG }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
-            type=raw,value=latest
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }},enable=${{ steps.release.outputs.latest == 'true' }}
+            type=raw,value=latest,enable=${{ steps.release.outputs.latest == 'true' }}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          file: deploy/Dockerfile.release
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: VERSION=${{ env.TAG }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max

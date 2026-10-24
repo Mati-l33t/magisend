@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -261,6 +262,7 @@ func (a *App) verifyHistoryStorage() error {
 		return e
 	}
 	defer rows.Close()
+	missing := 0
 	for rows.Next() {
 		var blob, loc string
 		var size int64
@@ -278,15 +280,20 @@ func (a *App) verifyHistoryStorage() error {
 		if e != nil {
 			return e
 		}
-		info, e := os.Lstat(filepath.Join(dir, blob))
-		if e != nil {
-			return e
-		}
-		if !info.Mode().IsRegular() || info.Size() != size {
-			return fmt.Errorf("unverified history blob")
+		// Older versions can be gone after a database-only restore; the
+		// files themselves are checked by checkStoredFiles, and a missing
+		// version only fails when it is opened.
+		if info, e := os.Lstat(filepath.Join(dir, blob)); e != nil || !info.Mode().IsRegular() || info.Size() != size {
+			missing++
 		}
 	}
-	return rows.Err()
+	if e = rows.Err(); e != nil {
+		return e
+	}
+	if missing > 0 {
+		log.Printf("storage: %d earlier text versions are missing or damaged; they cannot be opened or restored", missing)
+	}
+	return nil
 }
 func (a *App) libraryDeleteRoutes(m *http.ServeMux) {
 	m.HandleFunc("DELETE /api/library/files/{file}", func(w http.ResponseWriter, r *http.Request) {

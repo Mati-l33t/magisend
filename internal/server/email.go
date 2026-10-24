@@ -278,6 +278,11 @@ func (a *App) requestOrigin(r *http.Request) string {
 	if origin := a.linkOrigin(); origin != "" {
 		return origin
 	}
+	return a.ownOrigin(r)
+}
+
+// ownOrigin is the address the request itself came to.
+func (a *App) ownOrigin(r *http.Request) string {
 	scheme := "http"
 	if a.secureRequest(r) {
 		scheme = "https"
@@ -520,9 +525,13 @@ func (a *App) emailRoutes(m *http.ServeMux) {
 			fail(w, 400, "invalid_site_url")
 			return
 		}
-		// The administrator's own address is the natural default.
+		// The administrator's own address is the natural default; the stored
+		// one is what is being cleared, so it is not used.
 		if site == "" && s.Host != "" {
-			site = a.requestOrigin(r)
+			site = a.publicOrigin
+			if site == "" {
+				site = a.ownOrigin(r)
+			}
 		}
 		s.SiteURL = site
 		if s.FromName == "" {

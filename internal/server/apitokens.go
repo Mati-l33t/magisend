@@ -188,27 +188,23 @@ func (a *App) apiUpload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "invalid_input")
 		return
 	}
-	// The space this upload may use is reserved before a byte is read, so
-	// concurrent uploads cannot together go past the quota, the budget or the
-	// free disk; the reservation is released when the request ends.
-	a.mu.Lock()
-	reservation, rerr := a.reserveTokenUpload(u.ID, p.MaxShare)
-	a.mu.Unlock()
-	if internal(w, rerr) {
-		return
+	// Space is reserved before the bytes it holds are written, so concurrent
+	// uploads cannot together go past the quota, the budget or the free disk.
+	// It grows in steps as data arrives (from the announced length, if any),
+	// so an upload never holds much more than it sent; the reservation is
+	// released when the request ends.
+	space := &tokenSpace{a: a, owner: u.ID, limit: p.MaxShare}
+	first := int64(tokenReserveStep)
+	if r.ContentLength > 0 {
+		first = min(r.ContentLength, p.MaxShare)
 	}
-	if reservation <= 0 {
+	if ok, e := space.grow(first); internal(w, e) {
+		return
+	} else if !ok && !space.fits(1) {
 		fail(w, 507, "request_full")
 		return
 	}
-	released := false
-	defer func() {
-		a.mu.Lock()
-		if !released {
-			a.releaseTokenUpload(u.ID, reservation)
-		}
-		a.mu.Unlock()
-	}()
+	defer space.release()
 	r.Body = http.MaxBytesReader(w, &progressReader{reader: r.Body, w: w}, p.MaxShare+1<<20)
 	reader, e := r.MultipartReader()
 	if e != nil {
@@ -258,19 +254,18 @@ func (a *App) apiUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		files = append(files, received{name: name, path: path})
-		room := min(p.MaxFile, reservation-total)
-		size, e := io.Copy(out, io.LimitReader(part, room+1))
+		size, e := space.copy(out, part, total, p.MaxFile)
 		if e == nil {
 			e = out.Sync()
 		}
 		if ce := out.Close(); e == nil {
 			e = ce
 		}
-		if internal(w, e) {
+		if e == errNoTokenSpace {
+			fail(w, 413, "invalid_upload")
 			return
 		}
-		if size > room {
-			fail(w, 413, "invalid_upload")
+		if internal(w, e) {
 			return
 		}
 		files[len(files)-1].size = size
@@ -307,8 +302,7 @@ func (a *App) apiUpload(w http.ResponseWriter, r *http.Request) {
 	// The bytes are on disk and inside the reservation, which is handed back
 	// now; only the quota and budget are checked again (not the disk, which
 	// already holds them), and the storage location must still exist.
-	a.releaseTokenUpload(u.ID, reservation)
-	released = true
+	space.releaseLocked()
 	if !a.quotaRoom(w, u.ID, total) {
 		return
 	}
@@ -412,6 +406,93 @@ func (a *App) reserveTokenUpload(owner string, limit int64) (int64, error) {
 	a.tokenUploads.total += room
 	a.tokenUploads.user[owner] += room
 	return room, nil
+}
+
+// Token uploads reserve this much more space whenever they need more.
+const tokenReserveStep = 16 << 20
+
+var errNoTokenSpace = errors.New("no room for the upload")
+
+// tokenSpace is the space one token upload holds.
+type tokenSpace struct {
+	a           *App
+	owner       string
+	limit, held int64
+}
+
+// grow makes the reservation cover at least to bytes, taking a step more
+// when it can; false when the limits leave no room for that.
+func (s *tokenSpace) grow(to int64) (bool, error) {
+	if to <= s.held {
+		return true, nil
+	}
+	if to > s.limit {
+		return false, nil
+	}
+	want := min(s.limit, max(to, s.held+tokenReserveStep))
+	s.a.mu.Lock()
+	defer s.a.mu.Unlock()
+	got, e := s.a.reserveTokenUpload(s.owner, want-s.held)
+	if e != nil {
+		return false, e
+	}
+	if s.held+got < to {
+		s.a.releaseTokenUpload(s.owner, got)
+		return false, nil
+	}
+	s.held += got
+	return true, nil
+}
+
+// fits reports whether n more bytes would fit at all.
+func (s *tokenSpace) fits(n int64) bool {
+	ok, e := s.grow(s.held + n)
+	return ok && e == nil
+}
+
+// copy writes one part to out, reserving space before each piece is written.
+// done is what earlier parts already used; a part over max, or past what the
+// limits leave, fails with errNoTokenSpace.
+func (s *tokenSpace) copy(out io.Writer, part io.Reader, done, max int64) (int64, error) {
+	buf := make([]byte, 256<<10)
+	var n int64
+	for {
+		k, re := part.Read(buf)
+		if k > 0 {
+			n += int64(k)
+			if n > max {
+				return n, errNoTokenSpace
+			}
+			if ok, e := s.grow(done + n); e != nil {
+				return n, e
+			} else if !ok {
+				return n, errNoTokenSpace
+			}
+			if _, e := out.Write(buf[:k]); e != nil {
+				return n, e
+			}
+		}
+		if re == io.EOF {
+			return n, nil
+		}
+		if re != nil {
+			return n, re
+		}
+	}
+}
+
+func (s *tokenSpace) release() {
+	s.a.mu.Lock()
+	defer s.a.mu.Unlock()
+	s.releaseLocked()
+}
+
+// releaseLocked gives the reservation back. Caller holds mu.
+func (s *tokenSpace) releaseLocked() {
+	if s.held > 0 {
+		s.a.releaseTokenUpload(s.owner, s.held)
+		s.held = 0
+	}
 }
 
 // releaseTokenUpload gives a reservation back. Caller holds mu.

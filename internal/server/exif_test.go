@@ -193,3 +193,58 @@ func TestScrubCompressedPNGMetadata(t *testing.T) {
 		t.Fatal("the picture no longer decodes", e)
 	}
 }
+
+// A raw Exif profile in plain PNG text is hex that cannot be searched, so it
+// is replaced too; BigTIFF is refused; a GPS block in a second directory is
+// found.
+func TestScrubRawProfilesBigTIFFAndLaterDirectories(t *testing.T) {
+	var plain bytes.Buffer
+	if e := png.Encode(&plain, image.NewRGBA(image.Rect(0, 0, 4, 4))); e != nil {
+		t.Fatal(e)
+	}
+	source := plain.Bytes()
+	data := []byte("Raw profile type exif\x00\nexif\n     160\n" + strings.Repeat("4949", 40))
+	text := binary.BigEndian.AppendUint32(nil, uint32(len(data)))
+	text = append(append(text, "tEXt"...), data...)
+	crc := crc32.NewIEEE()
+	crc.Write([]byte("tEXt"))
+	crc.Write(data)
+	text = binary.BigEndian.AppendUint32(text, crc.Sum32())
+	file := append(append(append([]byte{}, source[:33]...), text...), source[33:]...)
+	path := filepath.Join(t.TempDir(), "photo.png")
+	os.WriteFile(path, file, 0600)
+	if changed, e := scrubLocation(path); e != nil || !changed {
+		t.Fatal(changed, e)
+	}
+	if got, _ := os.ReadFile(path); bytes.Contains(got, []byte("Raw profile type")) {
+		t.Fatal("an uncompressed raw profile was kept")
+	}
+
+	big := filepath.Join(t.TempDir(), "photo.tif")
+	os.WriteFile(big, append([]byte("II+\x00\x08\x00\x00\x00"), make([]byte, 64)...), 0600)
+	if _, e := scrubLocation(big); e != errLocationNotRemoved {
+		t.Fatal("BigTIFF was passed on unread", e)
+	}
+
+	// IFD0 at 8 holds nothing but points at a second directory: the block
+	// from exifBlock, moved to 200.
+	const at = 192
+	second := make([]byte, at+160)
+	le := binary.LittleEndian
+	copy(second, "II*\x00")
+	le.PutUint32(second[4:], 8)
+	le.PutUint16(second[8:], 0)
+	le.PutUint32(second[10:], at+8)
+	copy(second[at:], exifBlock())
+	for _, entry := range []int{10, 22, 34, 58, 94} {
+		le.PutUint32(second[at+entry+8:], le.Uint32(second[at+entry+8:])+at)
+	}
+	tiff := filepath.Join(t.TempDir(), "two.tif")
+	os.WriteFile(tiff, second, 0600)
+	if changed, e := scrubLocation(tiff); e != nil || !changed {
+		t.Fatal(changed, e)
+	}
+	if got, _ := os.ReadFile(tiff); !bytes.Equal(got[at+110:at+134], make([]byte, 24)) {
+		t.Fatal("the latitude in the second directory is still there")
+	}
+}

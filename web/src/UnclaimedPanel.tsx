@@ -24,7 +24,10 @@ interface MissingFile {
 }
 interface MissingState {
   count: number;
+  library: number;
   files: MissingFile[];
+  wrong: string[];
+  unreachable: string[];
 }
 interface UnclaimedState {
   count: number;
@@ -50,7 +53,11 @@ export function UnclaimedPanel({ changed }: { changed?: () => void }) {
     const next = await api<UnclaimedState>('/api/admin/storage/unclaimed');
     setState(next && Array.isArray(next.files) ? next : null);
     const gone = await api<MissingState>('/api/admin/storage/missing').catch(() => null);
-    setMissing(gone && Array.isArray(gone.files) ? gone : null);
+    setMissing(
+      gone && Array.isArray(gone.files)
+        ? { ...gone, wrong: gone.wrong ?? [], unreachable: gone.unreachable ?? [] }
+        : null,
+    );
   }
   useEffect(() => {
     load().catch(() => setState(null));
@@ -69,7 +76,10 @@ export function UnclaimedPanel({ changed }: { changed?: () => void }) {
       setBusy(false);
     }
   }
-  const lost = missing && missing.count > 0 ? missing : null;
+  const lost =
+    missing && (missing.count > 0 || missing.wrong.length > 0 || missing.unreachable.length > 0)
+      ? missing
+      : null;
   if (!state || (state.count === 0 && !note && !lost)) return null;
   const list = all ? state.files : state.files.slice(0, shown);
   return (
@@ -124,35 +134,67 @@ export function UnclaimedPanel({ changed }: { changed?: () => void }) {
       {lost && (
         <>
           <h3 className="backup-heading">{t('missing.title')}</h3>
-          <p className="muted">{t('missing.intro', { count: formatNumber(lost.count) })}</p>
+          {lost.count > 0 && (
+            <p className="muted">{t('missing.intro', { count: formatNumber(lost.count) })}</p>
+          )}
+          {lost.count > lost.library && (
+            <p className="muted">
+              {t('missing.inLinks', { count: formatNumber(lost.count - lost.library) })}
+            </p>
+          )}
+          {lost.unreachable.length > 0 && (
+            <p className="muted">
+              {t('missing.unreachable', { locations: lost.unreachable.join(', ') })}
+            </p>
+          )}
+          {lost.wrong.length > 0 && (
+            <p className="muted">{t('missing.wrong', { locations: lost.wrong.join(', ') })}</p>
+          )}
           <ul className="token-list">
             {lost.files.slice(0, shown).map((f) => (
               <li key={f.id}>
                 <div>
                   <strong>{f.name}</strong>
                   <small>
-                    {[t('unclaimed.owner', { name: f.owner }), formatBytes(f.size)].join(' · ')}
+                    {[
+                      t('unclaimed.owner', { name: f.owner }),
+                      formatBytes(f.size),
+                      f.library ? '' : t('missing.link'),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </small>
                 </div>
               </li>
             ))}
           </ul>
-          <div className="setting-actions">
-            <button
-              type="button"
-              className="secondary danger"
-              disabled={busy}
-              onClick={() => {
-                if (window.confirm(t('missing.removeConfirm', { count: formatNumber(lost.count) })))
-                  void run(async () => {
-                    await api('/api/admin/storage/missing', 'DELETE', {});
-                  });
-              }}
-            >
-              <Trash2 size={16} />
-              {t('missing.remove')}
-            </button>
-          </div>
+          {lost.library > 0 && lost.wrong.length === 0 && (
+            <div className="setting-actions">
+              <button
+                type="button"
+                className="secondary danger"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      t('missing.removeConfirm', { count: formatNumber(lost.library) }),
+                    )
+                  )
+                    void run(async () => {
+                      const done = await api<{ removed: number }>(
+                        '/api/admin/storage/missing',
+                        'DELETE',
+                        {},
+                      );
+                      setNote(t('missing.removed', { count: formatNumber(done.removed) }));
+                    });
+                }}
+              >
+                <Trash2 size={16} />
+                {t('missing.remove')}
+              </button>
+            </div>
+          )}
         </>
       )}
       {error && (

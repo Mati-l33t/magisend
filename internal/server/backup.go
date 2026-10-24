@@ -96,8 +96,6 @@ type BackupFile struct {
 	Size     int64  `json:"size"`
 	Created  int64  `json:"created"`
 	Complete bool   `json:"complete"`
-	// Made by this installation (or before archives carried its ID).
-	own bool
 	// When it was made, from its name.
 	stamp string
 }
@@ -120,13 +118,42 @@ func (a *App) backupDir(s BackupSettings) string {
 // installID names this installation's backups, so a shared backup folder
 // is never pruned or listed across installations.
 func (a *App) installID() string {
+	return a.install
+}
+
+var validInstallID = regexp.MustCompile(`^[0-9a-f]{8}$`).MatchString
+
+// loadInstallID reads the installation's ID from a file in the data folder,
+// outside the database that backups hold, so restoring an older database
+// keeps it. The first time, the ID the database had (or a new one) is
+// written there.
+func (a *App) loadInstallID() error {
+	path := filepath.Join(a.root, "install-id")
+	if data, e := os.ReadFile(path); e == nil && validInstallID(strings.TrimSpace(string(data))) {
+		a.install = strings.TrimSpace(string(data))
+		return nil
+	}
 	var id string
 	_ = a.db.QueryRow("SELECT install_id FROM settings WHERE id=1").Scan(&id)
-	return id
+	if !validInstallID(id) {
+		id = randomID()[:8]
+	}
+	temp := path + ".new"
+	_ = os.Remove(temp)
+	if e := os.WriteFile(temp, []byte(id+"\n"), 0600); e != nil {
+		return e
+	}
+	if e := os.Rename(temp, path); e != nil {
+		return e
+	}
+	_ = syncDir(a.root)
+	a.install = id
+	return nil
 }
 
 // listBackups returns this installation's backups in the folder, newest
-// first (archives from before installation IDs count as its own).
+// first; archives from before installation IDs count as its own, so they
+// are listed, kept and pruned like the rest.
 func listBackups(dir, install string) []BackupFile {
 	entries, _ := os.ReadDir(dir)
 	list := []BackupFile{}
@@ -139,7 +166,7 @@ func listBackups(dir, install string) []BackupFile {
 		if m == nil || m[1] != "" && m[1] != install {
 			continue
 		}
-		list = append(list, BackupFile{Name: entry.Name(), Size: info.Size(), Created: info.ModTime().Unix(), Complete: m[3] == "", own: m[1] == install, stamp: m[2]})
+		list = append(list, BackupFile{Name: entry.Name(), Size: info.Size(), Created: info.ModTime().Unix(), Complete: m[3] == "", stamp: m[2]})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].stamp > list[j].stamp })
 	return list
@@ -150,9 +177,6 @@ func listBackups(dir, install string) []BackupFile {
 func pruneBackups(dir, install string, keep int) {
 	keptComplete := false
 	for i, b := range listBackups(dir, install) {
-		if !b.own {
-			continue
-		}
 		if i < max(1, keep) || b.Complete && !keptComplete {
 			keptComplete = keptComplete || b.Complete
 			continue
@@ -198,12 +222,17 @@ func (a *App) startBackup(now time.Time) bool {
 		if !current {
 			return false
 		}
-		_, _ = a.db.Exec("UPDATE settings SET backup_last=?, backup_error=?, backup_warning=? WHERE id=1", now.Unix(), failure, warning)
+		// A run cut off by shutdown does not count as this period's backup.
+		if a.stopping.Load() {
+			_, _ = a.db.Exec("UPDATE settings SET backup_error=?, backup_warning='' WHERE id=1", failure)
+		} else {
+			_, _ = a.db.Exec("UPDATE settings SET backup_last=?, backup_error=?, backup_warning=? WHERE id=1", now.Unix(), failure, warning)
+		}
 		a.finishBackup()
 		return true
 	}
 	go func() {
-		missing, e := a.makeBackup(now)
+		missing, e := a.makeBackup(now, run)
 		close(finished)
 		failure, warning := "", ""
 		if e != nil {
@@ -267,9 +296,44 @@ path, so MagiSend recognises the location again.
 Files in the storage folders that the restored database does not know (made after
 this backup) are not deleted: MagiSend sets them aside and lists them under
 Administration → Storage, where they can be put back into the library.
+
+Restoring only the database does not bring back files deleted or replaced after
+this backup; MagiSend still starts and lists missing files under
+Administration → Storage.
 `
 
-func (a *App) makeBackup(now time.Time) ([]string, error) {
+// errBackupAbandoned stops a run that was given up or is cut off by shutdown.
+var errBackupAbandoned = errors.New("the backup was stopped")
+
+// backupProgress records that run made progress (bytes more of the total),
+// and reports whether it should go on: false once the watchdog gave it up,
+// a newer run took over, or MagiSend is shutting down.
+func (a *App) backupProgress(run int, bytes int64) bool {
+	a.backup.Lock()
+	defer a.backup.Unlock()
+	if a.backup.generation != run || !a.backup.running || a.stopping.Load() {
+		return false
+	}
+	a.backup.done += bytes
+	a.backup.progressAt = time.Now()
+	return true
+}
+
+// waitBackup lets a running backup end (it stops at its next step once
+// shutdown began), for at most limit.
+func (a *App) waitBackup(limit time.Duration) {
+	for end := time.Now().Add(limit); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
+		a.backup.Lock()
+		running := a.backup.running
+		a.backup.Unlock()
+		if !running {
+			return
+		}
+	}
+	log.Print("shutdown: the backup did not stop in time")
+}
+
+func (a *App) makeBackup(now time.Time, run int) ([]string, error) {
 	s, _, _, e := a.backupSettings()
 	if e != nil {
 		return nil, e
@@ -287,8 +351,13 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 	if _, e = a.db.Exec("VACUUM INTO ?", snapshot); e != nil {
 		return nil, errors.New("the database could not be copied")
 	}
+	// Folders on CIFS, exFAT or vfat do not keep permissions: the mount
+	// decides them, so a refused change does not stop the backup.
 	if e = os.Chmod(snapshot, 0600); e != nil {
-		return nil, errors.New("the database could not be copied")
+		log.Print("backup: the database copy's permissions could not be limited: ", e)
+	}
+	if !a.backupProgress(run, 0) {
+		return nil, errBackupAbandoned
 	}
 	// What could not be copied; the backup is then incomplete, and says so.
 	var missing []string
@@ -327,19 +396,27 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 					items = append(items, item{"files/" + loc + "/" + entry.Name(), filepath.Join(blobs, entry.Name())})
 				}
 			}
+			if !a.backupProgress(run, 0) {
+				return nil, errBackupAbandoned
+			}
 		}
 	}
 	var total int64
-	for _, it := range items {
+	for i, it := range items {
 		if info, e := os.Stat(it.path); e == nil {
 			total += info.Size()
+		}
+		if i%256 == 0 && !a.backupProgress(run, 0) {
+			return nil, errBackupAbandoned
 		}
 	}
 	if space, e := statDisk(dir); e == nil && total+(256<<20) > space.free {
 		return nil, errors.New("there is not enough free space in the backup folder")
 	}
 	a.backup.Lock()
-	a.backup.total = total
+	if a.backup.generation == run {
+		a.backup.total = total
+	}
 	a.backup.Unlock()
 
 	stamp := backupPrefix + install + "-" + now.UTC().Format("20060102-150405")
@@ -372,7 +449,10 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 		}
 	}
 	for _, it := range items {
-		copied, e := a.addToBackup(archive, it.name, it.path)
+		copied, e := a.addToBackup(archive, it.name, it.path, run)
+		if e == errBackupAbandoned {
+			return nil, e
+		}
 		if e != nil {
 			return nil, errors.New("the backup file cannot be written")
 		}
@@ -398,6 +478,9 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 	if e != nil {
 		return nil, errors.New("the backup file cannot be written")
 	}
+	if !a.backupProgress(run, 0) {
+		return nil, errBackupAbandoned
+	}
 	name := stamp + ".tar"
 	if len(missing) > 0 {
 		name = stamp + "-incomplete.tar"
@@ -414,7 +497,7 @@ func (a *App) makeBackup(now time.Time) ([]string, error) {
 // A read that fails partway (a bad sector, a share that dropped) fills the
 // rest with zeros, so the archive stays valid; only writing the archive can
 // fail the backup.
-func (a *App) addToBackup(archive *tar.Writer, name, path string) (bool, error) {
+func (a *App) addToBackup(archive *tar.Writer, name, path string, run int) (bool, error) {
 	file, e := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if e != nil {
 		return false, nil
@@ -444,10 +527,9 @@ func (a *App) addToBackup(archive *tar.Writer, name, path string) (bool, error) 
 			return false, e
 		}
 		written += int64(n)
-		a.backup.Lock()
-		a.backup.done += int64(n)
-		a.backup.progressAt = time.Now()
-		a.backup.Unlock()
+		if !a.backupProgress(run, int64(n)) {
+			return false, errBackupAbandoned
+		}
 	}
 	return whole, nil
 }
@@ -466,7 +548,9 @@ func (a *App) discardStored(path string) error {
 }
 
 // finishBackup removes what was deleted during the backup, unless the file
-// is in use there again (moved away and back meanwhile, say).
+// is in use there again (moved away and back meanwhile, say). A removal on a
+// share that does not answer in time is given up, with the rest in that
+// folder: those files are set aside as unknown at the next start.
 func (a *App) finishBackup() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -474,9 +558,13 @@ func (a *App) finishBackup() {
 	held := a.backup.held
 	a.backup.running, a.backup.held = false, nil
 	a.backup.Unlock()
+	hung := map[string]bool{}
 	for _, path := range held {
-		if !a.storedInUse(path) {
-			_ = os.Remove(path)
+		if hung[filepath.Dir(path)] || a.storedInUse(path) {
+			continue
+		}
+		if !timed(func() bool { _ = os.Remove(path); return true }, false) {
+			hung[filepath.Dir(path)] = true
 		}
 	}
 }
@@ -495,7 +583,8 @@ func (a *App) storedInUse(path string) bool {
 		if rows.Scan(&loc) != nil {
 			return true
 		}
-		if dir, e := a.blobDir(loc); e == nil && dir == filepath.Dir(path) {
+		// A location that is offline now may still be where it is kept.
+		if dir, e := a.blobDir(loc); errors.Is(e, errStorageOffline) || e == nil && dir == filepath.Dir(path) {
 			return true
 		}
 	}

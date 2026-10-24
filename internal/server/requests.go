@@ -248,17 +248,22 @@ func (a *App) requestRoutes(m *http.ServeMux) {
 		if !ok {
 			return
 		}
-		// The request-wide count only refuses wrong guesses, like share links.
-		if password != "" && bcrypt.CompareHashAndPassword([]byte(password), []byte(b.Password)) != nil {
+		// The request-wide count slows checks down, like share links.
+		a.mu.Lock()
+		tripped := a.blocked(requestKey, unlockFailuresPerShare)
+		a.mu.Unlock()
+		release, ok := a.throttleUnlock(r, requestKey, password != "" && tripped)
+		if !ok {
+			fail(w, 429, "too_many_attempts")
+			return
+		}
+		wrong := password != "" && bcrypt.CompareHashAndPassword([]byte(password), []byte(b.Password)) != nil
+		release()
+		if wrong {
 			a.mu.Lock()
-			blocked = a.blocked(requestKey, unlockFailuresPerShare)
 			a.failed(clientKey)
 			a.failed(requestKey)
 			a.mu.Unlock()
-			if blocked {
-				fail(w, 429, "too_many_attempts")
-				return
-			}
 			fail(w, 401, "wrong_password")
 			return
 		}

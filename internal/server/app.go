@@ -41,6 +41,9 @@ type App struct {
 	resumes map[string]time.Time
 	// Thumbnails decoded in a request because the queue was full.
 	thumbInline chan struct{}
+	unlockGates [unlockGateCount]chan struct{}
+	install     string
+	stopping    atomic.Bool
 	// The site URL for links (linkOrigin).
 	siteURL atomic.Value
 	// Library containers a ZIP is being unpacked into.
@@ -152,6 +155,9 @@ func NewApp(root, origin string) (*App, error) {
 	a.tokenUploads.user = map[string]int64{}
 	a.extracting = map[string]bool{}
 	a.thumbInline = make(chan struct{}, 2)
+	for i := range a.unlockGates {
+		a.unlockGates[i] = make(chan struct{}, 1)
+	}
 	a.mutationClients.count = map[string]int{}
 	a.uploadClients.count = map[string]int{}
 	go a.thumbnailWorker()
@@ -160,6 +166,10 @@ func NewApp(root, origin string) (*App, error) {
 		return nil, e
 	}
 	go a.storageMonitor()
+	if e = a.loadInstallID(); e != nil {
+		db.Close()
+		return nil, e
+	}
 	if e = a.verifyCommittedStorage(); e != nil {
 		db.Close()
 		return nil, e

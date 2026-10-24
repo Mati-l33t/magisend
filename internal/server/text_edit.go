@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -413,6 +414,10 @@ func (a *App) serveText(w http.ResponseWriter, r *http.Request, f File, user str
 			return
 		}
 		file, e := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if errors.Is(e, fs.ErrNotExist) {
+			fail(w, 404, "file_not_found")
+			return
+		}
 		if internal(w, e) {
 			return
 		}

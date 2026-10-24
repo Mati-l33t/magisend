@@ -69,6 +69,10 @@
   "incorrect_password": ["Incorrect password", "Fel lösenord"],
   "zip_file_limit": ["Too many files in the share", "För många filer i delningen"],
   "storage_unverified": ["The storage could not be verified", "Lagringen kan inte verifieras"],
+  "storage_wrong_disk": [
+    "A storage location looks like the wrong disk or share is mounted, so nothing was removed",
+    "En lagringsplats ser ut att ha fel disk eller utdelning monterad, så inget togs bort"
+  ],
   "invalid_share": [
     "Invalid share: 1–100 files; validity: 1–365 days",
     "Ogiltig delning: 1–100 filer, giltighet 1–365 dagar"

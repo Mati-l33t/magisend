@@ -2,6 +2,7 @@ package server
 
 import (
 	"archive/zip"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
@@ -106,6 +107,40 @@ func (a *App) Cleanup(now time.Time) error {
 	_, _ = a.db.Exec("DELETE FROM known_devices WHERE expires<=?", now.Unix())
 	return errors.Join(failures...)
 }
+
+// Once a link's shared count of wrong passwords trips, every check on it
+// waits its turn behind one of a few gates and holds it a while, so guesses
+// from many addresses together stay slow. Nobody is refused for the count
+// itself: a visitor who waits too long for a turn is asked to try again.
+var (
+	unlockThrottleDelay = time.Second
+	unlockThrottleWait  = 15 * time.Second
+)
+
+const unlockGateCount = 64
+
+// throttleUnlock waits for key's gate when its shared failure count tripped.
+// The returned release must be called after the password was checked; ok is
+// false when no turn came in time.
+func (a *App) throttleUnlock(r *http.Request, key string, tripped bool) (release func(), ok bool) {
+	if !tripped {
+		return func() {}, true
+	}
+	sum := sha256.Sum256([]byte(key))
+	gate := a.unlockGates[int(sum[0])%unlockGateCount]
+	wait := time.NewTimer(unlockThrottleWait)
+	defer wait.Stop()
+	select {
+	case gate <- struct{}{}:
+	case <-wait.C:
+		return nil, false
+	case <-r.Context().Done():
+		return nil, false
+	}
+	time.Sleep(unlockThrottleDelay)
+	return func() { <-gate }, true
+}
+
 func (a *App) lifecycleRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/public/{id}/unlock", func(w http.ResponseWriter, r *http.Request) {
 		var b struct {
@@ -133,19 +168,25 @@ func (a *App) lifecycleRoutes(m *http.ServeMux) {
 			fail(w, 410, "Delningen har gått ut")
 			return
 		}
-		// The link-wide count only refuses wrong guesses: the right password
-		// always works, so nobody can lock the recipients out by guessing.
+		// The link-wide count slows every check down instead of refusing:
+		// the right password always works, so nobody can lock the recipients
+		// out by guessing.
 		shareKey := "unlock-share:" + s.ID
-		if password != "" && bcrypt.CompareHashAndPassword([]byte(password), []byte(b.Password)) != nil {
+		a.mu.Lock()
+		tripped := a.blocked(shareKey, unlockFailuresPerShare)
+		a.mu.Unlock()
+		release, ok := a.throttleUnlock(r, shareKey, password != "" && tripped)
+		if !ok {
+			fail(w, 429, "too_many_attempts")
+			return
+		}
+		wrong := password != "" && bcrypt.CompareHashAndPassword([]byte(password), []byte(b.Password)) != nil
+		release()
+		if wrong {
 			a.mu.Lock()
-			blocked = a.blocked(shareKey, unlockFailuresPerShare)
 			a.failed(clientKey)
 			a.failed(shareKey)
 			a.mu.Unlock()
-			if blocked {
-				fail(w, 429, "För många försök. Vänta 15 minuter")
-				return
-			}
 			fail(w, 401, "Fel lösenord")
 			return
 		}

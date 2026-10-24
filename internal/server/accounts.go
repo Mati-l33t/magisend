@@ -292,6 +292,11 @@ func (a *App) accountRoutes(m *http.ServeMux) {
 		if _, e = tx.Exec("DELETE FROM api_tokens WHERE user_id=?", u.ID); internal(w, e) {
 			return
 		}
+		// Browsers that knew the old password lose their pass past the
+		// account-wide login limit.
+		if _, e = tx.Exec("DELETE FROM known_devices WHERE user_id=?", u.ID); internal(w, e) {
+			return
+		}
 		if internal(w, tx.Commit()) {
 			return
 		}
@@ -362,6 +367,9 @@ func (a *App) updateAccount(w http.ResponseWriter, r *http.Request, admin User, 
 		if _, e = tx.Exec("DELETE FROM api_tokens WHERE user_id=?", id); internal(w, e) {
 			return
 		}
+		if _, e = tx.Exec("DELETE FROM known_devices WHERE user_id=?", id); internal(w, e) {
+			return
+		}
 	}
 	if internal(w, tx.Commit()) {
 		return
@@ -391,6 +399,9 @@ func (a *App) deleteAccount(id string) error {
 		return e
 	}
 	if _, e := a.db.Exec("DELETE FROM api_tokens WHERE user_id=?", id); e != nil {
+		return e
+	}
+	if _, e := a.db.Exec("DELETE FROM known_devices WHERE user_id=?", id); e != nil {
 		return e
 	}
 	files, e := a.ids("SELECT l.file_id FROM library_files l JOIN files f ON f.id=l.file_id JOIN shares s ON s.id=f.share_id WHERE s.owner=?", id)

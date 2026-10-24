@@ -266,21 +266,34 @@ func (a *App) inviteRoutes(m *http.ServeMux) {
 		go func() {
 			a.mu.Lock()
 			defer a.mu.Unlock()
-			var id, name, email string
-			if login == "" || a.db.QueryRow("SELECT id,username,email FROM users WHERE (username=? OR lower(email)=lower(?)) AND email<>'' AND disabled=0 LIMIT 1", login, login).Scan(&id, &name, &email) != nil {
+			// Every request does the same reads and a single commit, so how
+			// long the lock is held does not tell whether an account matched.
+			tx, e := a.db.Begin()
+			if e != nil {
 				return
 			}
+			defer tx.Rollback()
+			var id, name, email string
 			var recent int
-			if a.db.QueryRow("SELECT COUNT(*) FROM password_resets WHERE user_id=? AND created>?", id, time.Now().Add(-time.Hour).Unix()).Scan(&recent) != nil || recent >= resetsPerAccountHour {
+			found := login != "" && tx.QueryRow("SELECT id,username,email FROM users WHERE (username=? OR lower(email)=lower(?)) AND email<>'' AND disabled=0 LIMIT 1", login, login).Scan(&id, &name, &email) == nil
+			now := time.Now()
+			if tx.QueryRow("SELECT COUNT(*) FROM password_resets WHERE user_id=? AND created>?", id, now.Add(-time.Hour).Unix()).Scan(&recent) != nil {
 				return
 			}
 			token := randomID()
-			now := time.Now()
-			if exec(a, "INSERT INTO password_resets(hash,user_id,created,expires) VALUES(?,?,?,?)", hash(token), id, now.Unix(), now.Add(resetLifetime).Unix()) != nil {
+			send := found && recent < resetsPerAccountHour
+			if send {
+				if _, e = tx.Exec("INSERT INTO password_resets(hash,user_id,created,expires) VALUES(?,?,?,?)", hash(token), id, now.Unix(), now.Add(resetLifetime).Unix()); e != nil {
+					return
+				}
+			}
+			if _, e = tx.Exec("INSERT INTO audit(at,actor,action,target,ip) VALUES(?,?,?,?,?)", now.Unix(), "", "password.reset_requested", name, a.clientIP(request)); e != nil {
+				return
+			}
+			if tx.Commit() != nil || !send {
 				return
 			}
 			a.queueMail(resetMail(email, name, a.linkOrigin()+"/reset/"+token, language))
-			a.audit(request, "", "password.reset_requested", name)
 		}()
 	})
 	m.HandleFunc("GET /api/password/reset/{token}", func(w http.ResponseWriter, r *http.Request) {
@@ -321,7 +334,7 @@ func (a *App) inviteRoutes(m *http.ServeMux) {
 		}
 		defer tx.Rollback()
 		// The new password ends every session, upload token and other reset link.
-		for _, q := range []string{"UPDATE users SET password=? WHERE id=?", "DELETE FROM sessions WHERE user_id=?", "DELETE FROM api_tokens WHERE user_id=?", "DELETE FROM password_resets WHERE user_id=?"} {
+		for _, q := range []string{"UPDATE users SET password=? WHERE id=?", "DELETE FROM sessions WHERE user_id=?", "DELETE FROM api_tokens WHERE user_id=?", "DELETE FROM password_resets WHERE user_id=?", "DELETE FROM known_devices WHERE user_id=?"} {
 			args := []any{user}
 			if strings.HasPrefix(q, "UPDATE") {
 				args = []any{string(hashed), user}

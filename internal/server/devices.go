@@ -34,16 +34,22 @@ func (a *App) knownDevice(r *http.Request, username string) bool {
 	return e == nil && n > 0
 }
 
-// rememberDevice marks this browser as known for user after a sign-in.
+// rememberDevice marks this browser as known for user after a sign-in. A
+// cookie is only kept when it is already this account's; any other value the
+// client sends is replaced by a new one.
 func (a *App) rememberDevice(w http.ResponseWriter, r *http.Request, user string) {
 	token := ""
 	if c, e := r.Cookie(deviceCookie); e == nil && validToken(c.Value) {
-		token = c.Value
-	} else {
+		var n int
+		if a.db.QueryRow("SELECT COUNT(*) FROM known_devices WHERE hash=? AND user_id=?", hash(c.Value), user).Scan(&n) == nil && n > 0 {
+			token = c.Value
+		}
+	}
+	if token == "" {
 		token = randomID()
 	}
 	expires := time.Now().Add(deviceLifetime).Unix()
-	if _, e := a.db.Exec("INSERT INTO known_devices(hash,user_id,expires) VALUES(?,?,?) ON CONFLICT(hash) DO UPDATE SET user_id=excluded.user_id,expires=excluded.expires", hash(token), user, expires); e != nil {
+	if _, e := a.db.Exec("INSERT INTO known_devices(hash,user_id,expires) VALUES(?,?,?) ON CONFLICT(hash) DO UPDATE SET expires=excluded.expires", hash(token), user, expires); e != nil {
 		return
 	}
 	_, _ = a.db.Exec("DELETE FROM known_devices WHERE user_id=? AND hash NOT IN (SELECT hash FROM known_devices WHERE user_id=? ORDER BY expires DESC LIMIT ?)", user, user, devicesPerUser)

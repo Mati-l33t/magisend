@@ -469,39 +469,65 @@ func (a *App) unclaimedRoutes(m *http.ServeMux) {
 	})
 	// Files the database has whose stored data is gone (after an older backup
 	// was restored, say): listed so the administrator can remove them.
+	// The disks are only read after mu is released: a hung share or a slow
+	// one with many files must not stop the app.
 	m.HandleFunc("GET /api/admin/storage/missing", func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
-		defer a.mu.Unlock()
-		if _, ok := a.require(w, r, true); !ok {
+		_, ok := a.require(w, r, true)
+		var files []storedFile
+		var e error
+		if ok {
+			files, e = a.storedFiles()
+		}
+		a.mu.Unlock()
+		if !ok || internal(w, e) {
 			return
 		}
-		missing, _, e := a.checkStoredFiles()
-		if internal(w, e) {
-			return
-		}
-		if missing == nil {
-			missing = []MissingFile{}
+		c := a.checkStored(files)
+		missing, library := []MissingFile{}, 0
+		for _, f := range c.missing {
+			missing = append(missing, f.MissingFile)
+			if f.Library {
+				library++
+			}
 		}
 		shown := missing
 		if len(shown) > maxUnclaimedList {
 			shown = shown[:maxUnclaimedList]
 		}
-		respond(w, 200, map[string]any{"count": len(missing), "files": shown})
+		respond(w, 200, map[string]any{"count": len(missing), "library": library, "files": shown, "wrong": nonNil(c.wrong), "unreachable": nonNil(c.unreachable)})
 	})
+	// Only library files whose data is not there at all are removed, never
+	// any on a location that looks like the wrong disk, and each is checked
+	// again under mu just before.
 	m.HandleFunc("DELETE /api/admin/storage/missing", func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
-		defer a.mu.Unlock()
 		admin, ok := a.require(w, r, true)
-		if !ok {
+		var files []storedFile
+		var e error
+		if ok {
+			files, e = a.storedFiles()
+		}
+		a.mu.Unlock()
+		if !ok || internal(w, e) {
 			return
 		}
-		missing, _, e := a.checkStoredFiles()
-		if internal(w, e) {
+		c := a.checkStored(files)
+		if len(c.wrong) > 0 {
+			fail(w, 409, "storage_wrong_disk")
 			return
 		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
 		removed := 0
-		for _, f := range missing {
-			if f.Library && a.removeLibraryFile(f.ID) == nil {
+		for _, f := range c.missing {
+			if !f.Library || !c.gone[f.ID] {
+				continue
+			}
+			if !a.stillGone(f) {
+				continue
+			}
+			if a.removeLibraryFile(f.ID) == nil {
 				removed++
 			}
 		}
@@ -525,4 +551,12 @@ func (a *App) unclaimedRoutes(m *http.ServeMux) {
 		a.audit(r, admin.Username, "storage.unclaimed_deleted", fmt.Sprint(deleted))
 		respond(w, 200, map[string]int{"deleted": deleted})
 	})
+}
+
+// nonNil keeps an empty list a list in JSON.
+func nonNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
 }

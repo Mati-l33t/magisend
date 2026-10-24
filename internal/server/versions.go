@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -107,13 +108,6 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 			fail(w, 429, "metadata_limit")
 			return
 		}
-		// A link that removes photo location data must not serve a new version
-		// with it.
-		if shouldScrub(source.Name) || shouldScrub(f.Name) {
-			if e := a.scrubIfStripped(f.ShareID, source.ID, source.Backend); internal(w, e) {
-				return
-			}
-		}
 		// Links that include the file must have room for its new size; the
 		// bytes themselves are already counted, as the uploaded file.
 		var folder string
@@ -122,6 +116,17 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 		}
 		if !a.libraryGrowthAllowed(w, u.ID, f.ID, source.Size, folder) {
 			return
+		}
+		// A link that removes photo location data must not serve a new version
+		// with it. Only done once the replacement is allowed, since it changes
+		// the uploaded file for good.
+		if shouldScrub(source.Name) || shouldScrub(f.Name) {
+			if e := a.scrubIfStripped(f.ShareID, source.ID, source.Backend); errors.Is(e, errLocationNotRemoved) {
+				fail(w, 422, "location_not_removed")
+				return
+			} else if internal(w, e) {
+				return
+			}
 		}
 		tx, e := a.db.Begin()
 		if internal(w, e) {
@@ -246,7 +251,10 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 			}
 		}()
 		if shouldScrub(f.Name) {
-			if e := a.scrubIfStripped(f.ShareID, blob, f.Backend); internal(w, e) {
+			if e := a.scrubIfStripped(f.ShareID, blob, f.Backend); errors.Is(e, errLocationNotRemoved) {
+				fail(w, 422, "location_not_removed")
+				return
+			} else if internal(w, e) {
 				return
 			}
 		}
