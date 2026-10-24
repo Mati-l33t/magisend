@@ -188,10 +188,11 @@ func (a *App) zipShare(w http.ResponseWriter, r *http.Request) {
 	// Four shared download slots bound concurrent ZIPs. Every file is checked
 	// before the response starts, then opened only when its turn comes, so a
 	// large folder never holds a descriptor per file.
-	if !acquire(w, a.downloads) {
+	release, ok := a.acquireDownload(w, r)
+	if !ok {
 		return
 	}
-	defer func() { <-a.downloads }()
+	defer release()
 	a.mu.Lock()
 	s, ok := a.publicShare(w, r)
 	if !ok {

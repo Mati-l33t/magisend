@@ -30,10 +30,18 @@ const chunkMax int64 = 4 << 20
 // root. Quota reservations and filesystem mutations are serialized by mu;
 // running another App against the same root is not supported.
 type App struct {
-	db                            *sql.DB
-	root, publicOrigin            string
-	setupCode                     string
-	indexSums                     map[string][32]byte
+	db                 *sql.DB
+	root, publicOrigin string
+	setupCode          string
+	indexSums          map[string][32]byte
+	// When a client was last counted downloading a file, so its later ranges
+	// continue that download instead of counting again.
+	resumes map[string]time.Time
+	// Download slots each client holds.
+	downloadClients struct {
+		sync.Mutex
+		count map[string]int
+	}
 	mu                            sync.Mutex
 	attempts                      map[string]attempt
 	mutations, uploads, downloads chan struct{}
@@ -129,7 +137,8 @@ func NewApp(root, origin string) (*App, error) {
 			return nil, e
 		}
 	}
-	a := &App{db: db, root: root, publicOrigin: origin, attempts: make(map[string]attempt), mutations: make(chan struct{}, 8), uploads: make(chan struct{}, 4), downloads: make(chan struct{}, 4), thumbs: make(chan string, thumbQueueDepth), ui: webInterface(), updates: newUpdates(), mail: make(chan outgoingMail, emailQueueDepth), push: make(chan pushJob, emailQueueDepth), sendMail: sendSMTP, indexSums: map[string][32]byte{}}
+	a := &App{db: db, root: root, publicOrigin: origin, attempts: make(map[string]attempt), mutations: make(chan struct{}, 8), uploads: make(chan struct{}, 4), downloads: make(chan struct{}, downloadSlots), thumbs: make(chan string, thumbQueueDepth), ui: webInterface(), updates: newUpdates(), mail: make(chan outgoingMail, emailQueueDepth), push: make(chan pushJob, emailQueueDepth), sendMail: sendSMTP, indexSums: map[string][32]byte{}, resumes: map[string]time.Time{}}
+	a.downloadClients.count = map[string]int{}
 	go a.thumbnailWorker()
 	if e = a.loadStorage(); e != nil {
 		db.Close()

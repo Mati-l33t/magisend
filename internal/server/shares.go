@@ -550,14 +550,19 @@ func (a *App) publicShare(w http.ResponseWriter, r *http.Request) (Share, bool) 
 	return s, true
 }
 func (a *App) download(w http.ResponseWriter, r *http.Request) {
-	a.downloadWith(w, r, a.countedDownload(w, r, func() (Share, bool) { return a.publicShare(w, r) }))
+	check, commit := a.countedDownload(w, r, func() (Share, bool) { return a.publicShare(w, r) })
+	a.downloadWith(w, r, check, commit)
 }
-func (a *App) downloadWith(w http.ResponseWriter, r *http.Request, authorize func() (Share, bool)) {
-	if !acquire(w, a.downloads) {
+
+// downloadWith streams one file. verified, if set, runs under mu once the
+// file is open and its size checked (counting a public download).
+func (a *App) downloadWith(w http.ResponseWriter, r *http.Request, authorize func() (Share, bool), verified ...func()) {
+	release, ok := a.acquireDownload(w, r)
+	if !ok {
 		return
 	}
-	defer func() { <-a.downloads }()
-	selected, file, ok := a.openReadableFile(w, r, authorize)
+	defer release()
+	selected, file, ok := a.openReadableFile(w, r, authorize, verified...)
 	if !ok {
 		return
 	}
@@ -573,7 +578,7 @@ func (a *App) downloadWith(w http.ResponseWriter, r *http.Request, authorize fun
 
 // Caller owns a download slot. Authorization and opening form a deletion-safe
 // snapshot under mu; decoding and streaming must happen after mu is released.
-func (a *App) openReadableFile(w http.ResponseWriter, r *http.Request, authorize func() (Share, bool)) (File, *os.File, bool) {
+func (a *App) openReadableFile(w http.ResponseWriter, r *http.Request, authorize func() (Share, bool), verified ...func()) (File, *os.File, bool) {
 	a.mu.Lock()
 	s, ok := authorize()
 	if !ok {
@@ -601,16 +606,25 @@ func (a *App) openReadableFile(w http.ResponseWriter, r *http.Request, authorize
 	}
 	// Never follow symlinks or block on a FIFO substituted for a blob.
 	file, e := a.openCurrent(selected.ID)
-	a.mu.Unlock()
-	if internal(w, e) {
+	if e != nil {
+		a.mu.Unlock()
+		internal(w, e)
 		return File{}, nil, false
 	}
 	info, e := file.Stat()
 	if e != nil || !info.Mode().IsRegular() || info.Size() != selected.Size {
+		a.mu.Unlock()
 		file.Close()
 		fail(w, 503, "Lagringen kan inte verifieras")
 		return File{}, nil, false
 	}
+	// Only now, with the file ready to send, is anything counted.
+	for _, after := range verified {
+		if after != nil {
+			after()
+		}
+	}
+	a.mu.Unlock()
 	return selected, file, true
 }
 

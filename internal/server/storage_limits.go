@@ -40,6 +40,42 @@ func acquire(w http.ResponseWriter, slots chan struct{}) bool {
 	}
 }
 
+const (
+	// Downloads, previews, media and thumbnails share these slots. One visitor
+	// gets at most as many as a browser opens to one site, so a few slow or
+	// hostile connections cannot take them all.
+	downloadSlots      = 32
+	downloadsPerClient = 6
+)
+
+// acquireDownload takes a download slot for this request's client.
+func (a *App) acquireDownload(w http.ResponseWriter, r *http.Request) (func(), bool) {
+	client := a.clientIP(r)
+	a.downloadClients.Lock()
+	if a.downloadClients.count[client] >= downloadsPerClient {
+		a.downloadClients.Unlock()
+		fail(w, 429, "För många samtidiga förfrågningar")
+		return nil, false
+	}
+	a.downloadClients.count[client]++
+	a.downloadClients.Unlock()
+	release := func() {
+		a.downloadClients.Lock()
+		if a.downloadClients.count[client]--; a.downloadClients.count[client] <= 0 {
+			delete(a.downloadClients.count, client)
+		}
+		a.downloadClients.Unlock()
+	}
+	if !acquire(w, a.downloads) {
+		release()
+		return nil, false
+	}
+	return func() {
+		<-a.downloads
+		release()
+	}, true
+}
+
 // Query errors hide a share rather than making deletion fail open.
 func (a *App) isDeleting(id string) bool {
 	var n int

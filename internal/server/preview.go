@@ -49,10 +49,11 @@ func (a *App) previewWith(w http.ResponseWriter, r *http.Request, authorize func
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	if !acquire(w, a.downloads) {
+	release, ok := a.acquireDownload(w, r)
+	if !ok {
 		return
 	}
-	defer func() { <-a.downloads }()
+	defer release()
 	selected, file, ok := a.openReadableFile(w, r, authorize)
 	if !ok {
 		return

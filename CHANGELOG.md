@@ -2,6 +2,14 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## 1.0.4
+
+Fairer downloads.
+
+- **Download limits hold against Range requests:** every request that delivers the start of a file counts, including suffix ranges and ranges served as the whole file, and conditional headers no longer change what is sent. Resuming is free only for the client whose download was counted.
+- **Nothing is used up by a download that fails:** a download is counted only once the file is open and verified, so an offline NAS or a damaged file no longer spends a one-time link.
+- **Slow or hostile clients cannot block downloads:** 32 download slots instead of 4, at most 6 per visitor, and a connection must keep receiving at least about 2 KB/s.
+
 ## 1.0.3
 
 Fixes for the files set aside in 1.0.2.

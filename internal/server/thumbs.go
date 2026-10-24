@@ -358,10 +358,11 @@ func (a *App) thumbnailWith(w http.ResponseWriter, r *http.Request, authorize fu
 		fail(w, 404, "thumbnail_unavailable")
 		return
 	}
-	if !acquire(w, a.downloads) {
+	release, ok := a.acquireDownload(w, r)
+	if !ok {
 		return
 	}
-	defer func() { <-a.downloads }()
+	defer release()
 	contentType := "image/jpeg"
 	if format == "png" {
 		contentType = "image/png"
