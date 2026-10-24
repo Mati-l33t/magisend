@@ -71,11 +71,16 @@ func TestDownloadLimitPerFileClosesTheLink(t *testing.T) {
 			t.Fatal(request, w.Code)
 		}
 	}
-	// Only the two fresh GETs counted, so the first file is used up, also for ranges.
-	for _, span := range []string{"", "bytes=1-"} {
-		if w := fetch(a, "GET", file(0), span); w.Code != 410 {
-			t.Fatal("used-up file still downloadable", span, w.Code)
-		}
+	// Only the two fresh GETs counted, so the first file is used up, also for
+	// ranges from anyone but the client that was counted, who may resume.
+	if w := fetch(a, "GET", file(0), ""); w.Code != 410 {
+		t.Fatal("used-up file still downloadable", w.Code)
+	}
+	if w := fetchFrom(a, "198.51.100.20", file(0), "bytes=1-"); w.Code != 410 {
+		t.Fatal("used-up file still downloadable by range", w.Code)
+	}
+	if w := fetch(a, "GET", file(0), "bytes=1-"); w.Code != 206 {
+		t.Fatal("the counted client could not resume", w.Code)
 	}
 	public := decodeObject(t, call(a, "GET", "/api/public/"+sh.ID, "", ""))
 	files := public["files"].([]any)
@@ -103,13 +108,24 @@ func TestDownloadLimitPerFileClosesTheLink(t *testing.T) {
 	if w := fetch(a, "GET", file(1), ""); w.Code != 200 {
 		t.Fatal(w.Code)
 	}
-	for _, path := range []string{"/api/public/" + sh.ID, file(1), "/api/public/" + sh.ID + "/zip"} {
+	// No new download can start; the counted client can still resume for a while.
+	for _, path := range []string{file(1), "/api/public/" + sh.ID + "/zip"} {
 		if w := fetch(a, "GET", path, ""); w.Code != 410 {
-			t.Fatal("link still open after the last download", path, w.Code)
+			t.Fatal("new download after the last one", path, w.Code)
 		}
 	}
-	if e := a.Cleanup(time.Now().Add(time.Second)); e != nil {
+	if w := fetch(a, "GET", file(1), "bytes=3-"); w.Code != 206 {
+		t.Fatal("the last download could not be resumed", w.Code)
+	}
+	later := time.Now().Add(closeGrace + time.Second)
+	if owner := ownerShare(t, a, admin, sh.ID); !shareExpired(owner.Expires, later.Unix()) {
+		t.Fatal("the link does not close after the grace period", owner.Expires)
+	}
+	if e := a.Cleanup(later); e != nil {
 		t.Fatal(e)
+	}
+	if w := fetch(a, "GET", "/api/public/"+sh.ID, ""); w.Code != 410 && w.Code != 404 {
+		t.Fatal("link still open after closing", w.Code)
 	}
 	if _, e := os.Stat(a.blob(sh.Files[0].ID)); !os.IsNotExist(e) {
 		t.Fatal("files kept after the link closed", e)

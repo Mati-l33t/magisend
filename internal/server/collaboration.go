@@ -327,6 +327,12 @@ func (a *App) collaborationRoutes(m *http.ServeMux) {
 			if !ok {
 				return
 			}
+			// Reading the text whole would be an uncounted download on a limited
+			// link (limited links cannot be edited).
+			if s.DownloadLimit > 0 {
+				fail(w, 403, "preview_unavailable")
+				return
+			}
 			var f File
 			found := false
 			for _, candidate := range s.Files {

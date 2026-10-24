@@ -175,3 +175,9 @@ func TestSlowReadersMustMakeProgress(t *testing.T) {
 		t.Fatal("progress did not renew the deadline", d.deadlines)
 	}
 }
+
+func fetchRequest(remote string) *http.Request {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = remote
+	return r
+}

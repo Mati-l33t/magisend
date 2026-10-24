@@ -266,7 +266,11 @@ func (a *App) accountRoutes(m *http.ServeMux) {
 			return
 		}
 		// Every other session of this account ends; this browser stays signed in.
+		// Upload tokens end too: a new password locks out whoever had the old.
 		if _, e = tx.Exec("DELETE FROM sessions WHERE user_id=? AND hash<>?", u.ID, hash(session.Value)); internal(w, e) {
+			return
+		}
+		if _, e = tx.Exec("DELETE FROM api_tokens WHERE user_id=?", u.ID); internal(w, e) {
 			return
 		}
 		if internal(w, tx.Commit()) {
@@ -330,9 +334,13 @@ func (a *App) updateAccount(w http.ResponseWriter, r *http.Request, admin User, 
 			return
 		}
 	}
-	// A reset password or a disabled account ends every existing session.
+	// A reset password or a disabled account ends every existing session and
+	// upload token.
 	if hashed != nil || disabled != nil && *disabled {
 		if _, e = tx.Exec("DELETE FROM sessions WHERE user_id=?", id); internal(w, e) {
+			return
+		}
+		if _, e = tx.Exec("DELETE FROM api_tokens WHERE user_id=?", id); internal(w, e) {
 			return
 		}
 	}

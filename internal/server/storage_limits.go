@@ -3,9 +3,11 @@ package server
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Links people create. Library uploads are stored as hidden containers and
@@ -48,9 +50,23 @@ const (
 	downloadsPerClient = 6
 )
 
+// slotClient groups IPv6 clients by /56, what a home connection usually gets,
+// so one household cannot hold the slots of many /64 networks.
+func slotClient(client string) string {
+	prefix, found := strings.CutSuffix(client, "/64")
+	if !found {
+		return client
+	}
+	ip := net.ParseIP(prefix)
+	if ip == nil {
+		return client
+	}
+	return ip.Mask(net.CIDRMask(56, 128)).String() + "/56"
+}
+
 // acquireDownload takes a download slot for this request's client.
 func (a *App) acquireDownload(w http.ResponseWriter, r *http.Request) (func(), bool) {
-	client := a.clientIP(r)
+	client := slotClient(a.clientIP(r))
 	a.downloadClients.Lock()
 	if a.downloadClients.count[client] >= downloadsPerClient {
 		a.downloadClients.Unlock()

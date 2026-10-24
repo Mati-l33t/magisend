@@ -309,8 +309,8 @@ func (a *App) inviteRoutes(m *http.ServeMux) {
 			return
 		}
 		defer tx.Rollback()
-		// The new password ends every session and every other reset link.
-		for _, q := range []string{"UPDATE users SET password=? WHERE id=?", "DELETE FROM sessions WHERE user_id=?", "DELETE FROM password_resets WHERE user_id=?"} {
+		// The new password ends every session, upload token and other reset link.
+		for _, q := range []string{"UPDATE users SET password=? WHERE id=?", "DELETE FROM sessions WHERE user_id=?", "DELETE FROM api_tokens WHERE user_id=?", "DELETE FROM password_resets WHERE user_id=?"} {
 			args := []any{user}
 			if strings.HasPrefix(q, "UPDATE") {
 				args = []any{string(hashed), user}

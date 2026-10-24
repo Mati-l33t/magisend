@@ -162,6 +162,8 @@ func coversStart(span string, size int64) bool {
 func usedUp(f File) bool { return f.Remaining != nil && *f.Remaining == 0 }
 
 const (
+	// How long a used-up link stays open for resuming the last download.
+	closeGrace   = time.Hour
 	resumeWindow = 24 * time.Hour
 	maxResumes   = 10000
 )
@@ -190,14 +192,18 @@ func (a *App) countedDownload(w http.ResponseWriter, r *http.Request, authorize 
 			if f.ID != r.PathValue("file") || f.Offset != f.Size {
 				continue
 			}
+			key := s.ID + "|" + f.ID + "|" + a.clientIP(r)
 			if usedUp(f) {
+				// The client whose download used the last one may still resume it.
+				if r.Method == http.MethodGet && !coversStart(r.Header.Get("Range"), f.Size) && a.resumable(key) {
+					continue
+				}
 				fail(w, 410, "download_limit_reached")
 				return s, false
 			}
 			if r.Method != http.MethodGet {
 				continue
 			}
-			key := s.ID + "|" + f.ID + "|" + a.clientIP(r)
 			if coversStart(r.Header.Get("Range"), f.Size) || !a.resumable(key) {
 				share, counted, keys = s, append(counted, f), append(keys, key)
 			}
@@ -269,9 +275,12 @@ func (a *App) recordDownloads(s Share, files []File) {
 	if !usedUpShare(s, counted) {
 		return
 	}
-	// The last allowed download closes the link. Transfers in progress keep
-	// their open files; the owner hears about it before the cleanup runs.
-	_, _ = a.db.Exec("UPDATE shares SET expires=? WHERE id=?", now, s.ID)
+	// The last allowed download closes the link after closeGrace: no new
+	// download can start, but the client that was counted can resume an
+	// interrupted one. Then the link expires and its files are removed; the
+	// owner hears about it now.
+	closes := now + int64(closeGrace/time.Second)
+	_, _ = a.db.Exec("UPDATE shares SET expires=? WHERE id=? AND (expires=0 OR expires>?)", closes, s.ID, closes)
 	a.audit(nil, "", "share.closed", s.Title)
 	a.sendNotifications(time.Unix(now, 0), s.ID)
 	var owner, origin string

@@ -105,6 +105,7 @@ func TestPasswordResetByEmail(t *testing.T) {
 		t.Fatal(w.Code, mails)
 	}
 	_, token := mailToken(t, mails[0])
+	upload := decodeObject(t, call(a, "POST", "/api/account/tokens", `{"name":"ShareX"}`, admin))["token"].(string)
 	if w = call(a, "GET", "/api/password/reset/"+token, "", ""); decodeObject(t, w)["username"] != "mati" {
 		t.Fatal(w.Body)
 	}
@@ -116,6 +117,9 @@ func TestPasswordResetByEmail(t *testing.T) {
 	}
 	if w = call(a, "GET", "/api/me", "", admin); w.Code != 401 {
 		t.Fatal("old session survived the reset", w.Code)
+	}
+	if w = tokenUpload(a, upload, "", map[string]string{"a.txt": "x"}); w.Code != 401 {
+		t.Fatal("an upload token survived the reset", w.Code)
 	}
 	if w = call(a, "POST", "/api/password/reset/"+token, `{"password":"another long passphrase"}`, ""); w.Code != 404 {
 		t.Fatal("reset link used twice", w.Code)

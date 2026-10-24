@@ -2,6 +2,15 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## 1.0.5
+
+Follow-ups from a security review.
+
+- **A new password removes API tokens:** changing your password, an administrator's reset and a reset by email now remove the account's API tokens as well as its sign-ins, so whoever had the old password keeps no way in.
+- **One-time links can be resumed:** a link whose last download was used stays open for an hour so that download can be resumed by the same visitor; nobody can start a new one. Then it closes and its files are removed as before.
+- **Limited links do not show text in full:** like previews and the media player, the text view is not offered on links with a download limit, where it would be an uncounted download.
+- **Download slots per household:** IPv6 visitors are grouped by /56, what a home connection usually gets, for the per-visitor limit.
+
 ## 1.0.4
 
 Fairer downloads.
