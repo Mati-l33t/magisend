@@ -399,13 +399,19 @@ func (a *App) reserveTokenUpload(owner string, limit int64) (int64, error) {
 	if e != nil {
 		return 0, e
 	}
-	room := min(limit, quota-used-a.tokenUploads.user[owner], budget-all-a.tokenUploads.total, free-(512<<20)-reserved-a.tokenUploads.total)
+	room := min(limit, quota-used-a.tokenUploads.user[owner], budget-all-a.tokenUploads.total, free-(512<<20)-reserved-a.tokenDiskHeld())
 	if room <= 0 {
 		return 0, nil
 	}
 	a.tokenUploads.total += room
 	a.tokenUploads.user[owner] += room
 	return room, nil
+}
+
+// tokenDiskHeld is the part of token reservations not yet written to disk:
+// what is written already counts in the free space. Caller holds mu.
+func (a *App) tokenDiskHeld() int64 {
+	return a.tokenUploads.total - a.tokenUploads.written
 }
 
 // Token uploads reserve this much more space whenever they need more.
@@ -418,6 +424,8 @@ type tokenSpace struct {
 	a           *App
 	owner       string
 	limit, held int64
+	// Bytes written so far, and how many of them tokenUploads.written has.
+	wrote, counted int64
 }
 
 // grow makes the reservation cover at least to bytes, taking a step more
@@ -432,6 +440,8 @@ func (s *tokenSpace) grow(to int64) (bool, error) {
 	want := min(s.limit, max(to, s.held+tokenReserveStep))
 	s.a.mu.Lock()
 	defer s.a.mu.Unlock()
+	s.a.tokenUploads.written += s.wrote - s.counted
+	s.counted = s.wrote
 	got, e := s.a.reserveTokenUpload(s.owner, want-s.held)
 	if e != nil {
 		return false, e
@@ -468,7 +478,9 @@ func (s *tokenSpace) copy(out io.Writer, part io.Reader, done, max int64) (int64
 			} else if !ok {
 				return n, errNoTokenSpace
 			}
-			if _, e := out.Write(buf[:k]); e != nil {
+			wrote, e := out.Write(buf[:k])
+			s.wrote += int64(wrote)
+			if e != nil {
 				return n, e
 			}
 		}
@@ -489,6 +501,8 @@ func (s *tokenSpace) release() {
 
 // releaseLocked gives the reservation back. Caller holds mu.
 func (s *tokenSpace) releaseLocked() {
+	s.a.tokenUploads.written -= s.counted
+	s.wrote, s.counted = 0, 0
 	if s.held > 0 {
 		s.a.releaseTokenUpload(s.owner, s.held)
 		s.held = 0

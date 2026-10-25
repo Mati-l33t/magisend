@@ -43,17 +43,18 @@ type App struct {
 	thumbInline chan struct{}
 	unlockGates [unlockGateCount]chan struct{}
 	install     string
-	// One picture conversion for a preview at a time.
-	previewConvert chan struct{}
-	stopping       atomic.Bool
+	// One picture conversion for a preview at a time, and two full decodes.
+	previewConvert, previewDecode chan struct{}
+	stopping                      atomic.Bool
 	// The site URL for links (linkOrigin).
 	siteURL atomic.Value
 	// Library containers a ZIP is being unpacked into.
 	extracting map[string]bool
-	// Bytes reserved by token uploads in progress, in total and per owner.
+	// Bytes reserved by token uploads in progress, in total and per owner,
+	// and how much of that they have written to disk.
 	tokenUploads struct {
-		total int64
-		user  map[string]int64
+		total, written int64
+		user           map[string]int64
 	}
 	// Slots each client holds.
 	downloadClients, mutationClients, uploadClients clientSlots
@@ -158,6 +159,7 @@ func NewApp(root, origin string) (*App, error) {
 	a.extracting = map[string]bool{}
 	a.thumbInline = make(chan struct{}, 2)
 	a.previewConvert = make(chan struct{}, 1)
+	a.previewDecode = make(chan struct{}, 2)
 	for i := range a.unlockGates {
 		a.unlockGates[i] = make(chan struct{}, 1)
 	}

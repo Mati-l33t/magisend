@@ -130,7 +130,7 @@ func (a *App) previewWith(w http.ResponseWriter, r *http.Request, authorize func
 		http.ServeContent(w, r, selected.Name, time.Time{}, bytes.NewReader(converted))
 		return
 	}
-	contentType, ok := rasterPreviewType(data)
+	contentType, ok := a.decodePreview(r, data)
 	if !ok {
 		contentType, ok = documentPreview(selected.Name, data)
 	}
@@ -142,6 +142,19 @@ func (a *App) previewWith(w http.ResponseWriter, r *http.Request, authorize func
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", inline)
 	http.ServeContent(w, r, selected.Name, time.Time{}, bytes.NewReader(data))
+}
+
+// decodePreview checks a picture by decoding it fully, which takes up to
+// about 100 MB; only a few run at once, and a visitor waits for a turn
+// while the request lasts.
+func (a *App) decodePreview(r *http.Request, data []byte) (string, bool) {
+	select {
+	case a.previewDecode <- struct{}{}:
+	case <-r.Context().Done():
+		return "", false
+	}
+	defer func() { <-a.previewDecode }()
+	return rasterPreviewType(data)
 }
 
 // convertPreview runs one picture conversion at a time, which can need a few

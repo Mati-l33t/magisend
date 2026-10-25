@@ -110,8 +110,8 @@ func TestKnownDevicesEndWithThePassword(t *testing.T) {
 	}
 }
 
-// The installation's ID lives outside the database, so a restored older
-// database does not make this installation's backups look foreign.
+// A restored database from before installation IDs keeps this
+// installation's ID, through the copy in the data folder.
 func TestInstallIDSurvivesARestoredDatabase(t *testing.T) {
 	root := t.TempDir()
 	a, e := NewApp(root, "")
@@ -122,7 +122,7 @@ func TestInstallIDSurvivesARestoredDatabase(t *testing.T) {
 	if !validInstallID(id) {
 		t.Fatal(id)
 	}
-	a.db.Exec("UPDATE settings SET install_id='0badf00d'")
+	a.db.Exec("UPDATE settings SET install_id=''")
 	a.db.Close()
 	b, e := NewApp(root, "")
 	if e != nil {
@@ -131,6 +131,40 @@ func TestInstallIDSurvivesARestoredDatabase(t *testing.T) {
 	defer b.db.Close()
 	if b.installID() != id {
 		t.Fatal("the installation ID changed with the database", b.installID(), id)
+	}
+	var stored string
+	b.db.QueryRow("SELECT install_id FROM settings").Scan(&stored)
+	if stored != id {
+		t.Fatal("the database did not get the ID back", stored, id)
+	}
+}
+
+// A database restored on a new machine brings the old installation's ID,
+// so its backups are listed and pruned there.
+func TestRestoredDatabaseBringsItsInstallID(t *testing.T) {
+	root := t.TempDir()
+	a, e := NewApp(root, "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	dir := t.TempDir()
+	old := "magisend-backup-aaaaaaaa-20261001-000000.tar"
+	os.WriteFile(filepath.Join(dir, old), []byte("x"), 0600)
+	a.db.Exec("UPDATE settings SET install_id='aaaaaaaa'")
+	a.db.Close()
+	b, e := NewApp(root, "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer b.db.Close()
+	if b.installID() != "aaaaaaaa" {
+		t.Fatal("the restored database's ID was not taken", b.installID())
+	}
+	if saved, _ := os.ReadFile(filepath.Join(root, "install-id")); strings.TrimSpace(string(saved)) != "aaaaaaaa" {
+		t.Fatal("the ID file was not updated", string(saved))
+	}
+	if list := listBackups(dir, b.installID()); len(list) != 1 || list[0].Name != old {
+		t.Fatal("the old installation's backups are not listed", list)
 	}
 }
 

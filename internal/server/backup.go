@@ -63,8 +63,7 @@ func migrateBackup(db *sql.DB) error {
 			return e
 		}
 	}
-	_, e := db.Exec("UPDATE settings SET install_id=? WHERE id=1 AND install_id=''", randomID()[:8])
-	return e
+	return nil
 }
 
 type BackupSettings struct {
@@ -123,20 +122,33 @@ func (a *App) installID() string {
 
 var validInstallID = regexp.MustCompile(`^[0-9a-f]{8}$`).MatchString
 
-// loadInstallID reads the installation's ID from a file in the data folder,
-// outside the database that backups hold, so restoring an older database
-// keeps it. The first time, the ID the database had (or a new one) is
-// written there.
+// loadInstallID settles the installation's ID. The database holds it, so a
+// database restored on a new machine brings the old installation's ID and
+// with it its backups. A copy in a file in the data folder keeps the ID when
+// the restored database is from before installation IDs and has none.
 func (a *App) loadInstallID() error {
 	path := filepath.Join(a.root, "install-id")
-	if data, e := os.ReadFile(path); e == nil && validInstallID(strings.TrimSpace(string(data))) {
-		a.install = strings.TrimSpace(string(data))
-		return nil
+	var saved, id string
+	if data, e := os.ReadFile(path); e == nil {
+		saved = strings.TrimSpace(string(data))
 	}
-	var id string
 	_ = a.db.QueryRow("SELECT install_id FROM settings WHERE id=1").Scan(&id)
-	if !validInstallID(id) {
+	switch {
+	case validInstallID(id):
+		if validInstallID(saved) && saved != id {
+			log.Printf("backups: the database is from installation %s; its backups are this installation's now", id)
+		}
+	case validInstallID(saved):
+		id = saved
+	default:
 		id = randomID()[:8]
+	}
+	if _, e := a.db.Exec("UPDATE settings SET install_id=? WHERE id=1", id); e != nil {
+		return e
+	}
+	a.install = id
+	if saved == id {
+		return nil
 	}
 	temp := path + ".new"
 	_ = os.Remove(temp)
@@ -147,7 +159,6 @@ func (a *App) loadInstallID() error {
 		return e
 	}
 	_ = syncDir(a.root)
-	a.install = id
 	return nil
 }
 

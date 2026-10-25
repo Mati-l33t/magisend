@@ -2,6 +2,15 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+Fixes from a third review, of the 1.0.7 changes.
+
+- **Uploads with API tokens** without a stated length no longer stop early on a nearly full disk: bytes already written are no longer counted twice against the free space.
+- **Restores:** a database restored on a new machine brings the old installation's ID, so its backups are listed and pruned there again.
+- **Previews:** at most two pictures are decoded at once to check them.
+- **Thumbnails:** HEIC thumbnails decode photos up to 50 megapixels and scale them without a full-size picture in between, and a file that never finishes is given up on after two tries.
+
 ## 1.0.7
 
 Fixes from a second review, of the 1.0.6 fixes themselves.

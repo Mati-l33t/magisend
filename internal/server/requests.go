@@ -121,7 +121,7 @@ func (a *App) storageRoom(w http.ResponseWriter, owner string, size int64) bool 
 	if internal(w, a.db.QueryRow("SELECT COALESCE(SUM(size-offset),0) FROM files").Scan(&reserved)) {
 		return false
 	}
-	if size+reserved+a.tokenUploads.total > free-(512<<20) {
+	if size+reserved+a.tokenDiskHeld() > free-(512<<20) {
 		fail(w, 507, "request_full")
 		return false
 	}

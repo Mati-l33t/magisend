@@ -1,5 +1,5 @@
 import { extension } from './fileKind';
-import { browserDraws, heifToJPEG, isHeif } from './heic';
+import { browserDraws, heifThumb, isHeif } from './heic';
 
 // Pictures the server cannot draw itself: the first page of a PDF, a frame of
 // a video, and image types beyond PNG, JPEG and GIF. The owner's browser draws
@@ -12,6 +12,10 @@ const maxPdfBytes = 100 * 1024 * 1024;
 const maxImageBytes = 50 * 1024 * 1024;
 const waitLimit = 20_000;
 const failedKey = 'magisend.thumbFailed';
+const tryingKey = 'magisend.thumbTrying';
+// Tries that never finished (the tab closed or crashed) before a file is
+// given up on, so a file that crashes the tab is not tried on every visit.
+const maxTries = 2;
 
 type Source = { server: { shareId: string; fileId: string }; local?: File };
 
@@ -99,9 +103,9 @@ async function videoFrame(url: string) {
 }
 
 async function imageFrame(blob: Blob, name: string) {
-  let typed = new Blob([blob], { type: imageTypes[extension(name)] || blob.type });
-  // Only Safari draws HEIC itself; elsewhere it is decoded here first.
-  if (isHeif(typed.type) && !(await browserDraws(typed))) typed = await within(heifToJPEG(typed));
+  const typed = new Blob([blob], { type: imageTypes[extension(name)] || blob.type });
+  // Only Safari draws HEIC itself; elsewhere it is decoded here.
+  if (isHeif(typed.type) && !(await browserDraws(typed))) return within(heifThumb(typed, edge));
   const url = URL.createObjectURL(typed);
   try {
     const image = new Image();
@@ -141,6 +145,41 @@ function failed(): string[] {
   }
 }
 
+function trying(): Record<string, number> {
+  try {
+    const tries = JSON.parse(localStorage.getItem(tryingKey) || '{}');
+    return tries && typeof tries === 'object' && !Array.isArray(tries) ? tries : {};
+  } catch {
+    return {};
+  }
+}
+
+// Counts a try before it starts; done clears it again.
+function startTry(fileId: string) {
+  try {
+    const tries = trying();
+    tries[fileId] = (Number(tries[fileId]) || 0) + 1;
+    const kept = Object.entries(tries).slice(-100);
+    localStorage.setItem(tryingKey, JSON.stringify(Object.fromEntries(kept)));
+  } catch {
+    // Without storage the file is simply tried again on the next visit.
+  }
+}
+
+function endTry(fileId: string) {
+  try {
+    const tries = trying();
+    delete tries[fileId];
+    localStorage.setItem(tryingKey, JSON.stringify(tries));
+  } catch {
+    // Nothing was stored.
+  }
+}
+
+function givenUp(fileId: string) {
+  return failed().includes(fileId) || (Number(trying()[fileId]) || 0) >= maxTries;
+}
+
 function rememberFailure(fileId: string) {
   try {
     localStorage.setItem(failedKey, JSON.stringify([...failed(), fileId].slice(-500)));
@@ -150,6 +189,8 @@ function rememberFailure(fileId: string) {
 }
 
 async function make(shareId: string, fileId: string, name: string, local?: File) {
+  if (givenUp(fileId)) return false;
+  startTry(fileId);
   try {
     const canvas = await drawn({ server: { shareId, fileId }, local }, name);
     const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
@@ -166,6 +207,8 @@ async function make(shareId: string, fileId: string, name: string, local?: File)
   } catch {
     rememberFailure(fileId);
     return false;
+  } finally {
+    endTry(fileId);
   }
 }
 
@@ -186,8 +229,7 @@ function queued(shareId: string, fileId: string, name: string, local?: File) {
 // Called for a file the owner sees that has no picture yet. Resolves true
 // once the server has one.
 export function ensureThumb(shareId: string, file: { id: string; name: string }) {
-  if (!browserThumbName.test(file.name) || failed().includes(file.id))
-    return Promise.resolve(false);
+  if (!browserThumbName.test(file.name) || givenUp(file.id)) return Promise.resolve(false);
   return queued(shareId, file.id, file.name);
 }
 

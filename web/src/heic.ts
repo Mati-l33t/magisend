@@ -40,7 +40,9 @@ export async function browserDraws(blob: Blob) {
   }
 }
 
-export async function heifToJPEG(blob: Blob): Promise<Blob> {
+// Decodes the first picture in the file into pixels, if it has at most
+// maxPixels of them.
+async function decoded(blob: Blob, maxPixels: number): Promise<ImageData> {
   const { HeifDecoder } = await libheif();
   const decoder = new HeifDecoder();
   const images = decoder.decode(new Uint8Array(await blob.arrayBuffer()));
@@ -50,21 +52,58 @@ export async function heifToJPEG(blob: Blob): Promise<Blob> {
     const width = image.get_width();
     const height = image.get_height();
     if (!width || !height || width * height > maxPixels) throw new Error('too large');
+    const pixels = new ImageData(width, height);
+    await new Promise<void>((resolve, reject) =>
+      image.display(pixels, (shown) => (shown ? resolve() : reject(new Error('unreadable')))),
+    );
+    return pixels;
+  } finally {
+    for (const image of images) image.free?.();
+    decoder.free?.();
+  }
+}
+
+export async function heifToJPEG(blob: Blob): Promise<Blob> {
+  const pixels = await decoded(blob, maxPixels);
+  const canvas = document.createElement('canvas');
+  canvas.width = pixels.width;
+  canvas.height = pixels.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('no canvas');
+  context.putImageData(pixels, 0, 0);
+  try {
+    return await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('unreadable'))), 'image/jpeg', 0.92),
+    );
+  } finally {
+    canvas.width = 0;
+  }
+}
+
+// A thumbnail needs far fewer pixels than the viewer: only photos up to
+// about 50 megapixels are decoded, and scaled straight from the pixels to
+// width × height without a full-size canvas.
+const thumbMaxPixels = 50_000_000;
+
+export async function heifThumb(blob: Blob, edge: number): Promise<HTMLCanvasElement> {
+  const pixels = await decoded(blob, thumbMaxPixels);
+  const scale = Math.min(1, edge / Math.max(pixels.width, pixels.height));
+  const width = Math.max(1, Math.round(pixels.width * scale));
+  const height = Math.max(1, Math.round(pixels.height * scale));
+  const bitmap = await createImageBitmap(pixels, {
+    resizeWidth: width,
+    resizeHeight: height,
+    resizeQuality: 'high',
+  });
+  try {
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('no canvas');
-    const pixels = context.createImageData(width, height);
-    await new Promise<void>((resolve, reject) =>
-      image.display(pixels, (shown) => (shown ? resolve() : reject(new Error('unreadable')))),
-    );
-    context.putImageData(pixels, 0, 0);
-    return await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('unreadable'))), 'image/jpeg', 0.92),
-    );
+    context.drawImage(bitmap, 0, 0, width, height);
+    return canvas;
   } finally {
-    for (const image of images) image.free?.();
-    decoder.free?.();
+    bitmap.close();
   }
 }
