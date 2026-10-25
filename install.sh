@@ -45,7 +45,14 @@ esac
 
 if [ -f "$APP_DIR/.magisend-release" ]; then
   step "MagiSend is already installed, updating to the latest release"
-  exec "$APP_DIR/update.sh"
+  "$APP_DIR/update.sh" || exit
+  if [ "${MAGISEND_WITH_CLAMAV:-}" = 1 ]; then
+    grep -q -- '--clamav' "$APP_DIR/update.sh" || die "this MagiSend cannot install ClamAV yet; update it first"
+    step "Installing ClamAV for virus scanning (this takes a few minutes)"
+    "$APP_DIR/update.sh" --clamav || die "ClamAV was not installed; see above"
+    done_ "ClamAV installed; switch scanning on under Administration → Virus scanning"
+  fi
+  exit 0
 fi
 [ ! -e "$APP_DIR" ] || die "$APP_DIR exists but is not a MagiSend release installation; move it away first"
 
@@ -107,28 +114,10 @@ for _ in $(seq 1 30); do
 done
 MAGISEND_LISTEN="0.0.0.0:$PORT" "$APP_DIR/magisend" --healthcheck || die "MagiSend did not start; see: journalctl -u magisend"
 
-# ClamAV runs as its own service; MagiSend talks to it over its local socket.
+# ClamAV is installed by the updater, which the admin page can also ask to.
 if [ "${MAGISEND_WITH_CLAMAV:-}" = 1 ]; then
-  step "Installing ClamAV for virus scanning"
-  command -v apt-get > /dev/null || die "ClamAV is only installed with apt here; install clamav-daemon yourself"
-  memory=$(awk '/^MemTotal/ {print int($2 / 1024)}' /proc/meminfo)
-  [ "$memory" -ge 2000 ] || echo "  Note: ClamAV needs about 1.5 GB of memory and this system has $memory MB."
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav-daemon clamav-freshclam > /dev/null
-  # Files up to 100 MB are scanned, matching MagiSend's default.
-  conf=/etc/clamav/clamd.conf
-  if grep -q '^StreamMaxLength' "$conf"; then
-    sed -i 's/^StreamMaxLength.*/StreamMaxLength 100M/' "$conf"
-  else
-    echo 'StreamMaxLength 100M' >> "$conf"
-  fi
-  systemctl enable --now clamav-freshclam > /dev/null 2>&1 || true
-  # clamd starts once the first virus database has been downloaded.
-  for _ in $(seq 1 60); do
-    compgen -G '/var/lib/clamav/main.c[lv]d' > /dev/null && break
-    sleep 5
-  done
-  systemctl enable clamav-daemon > /dev/null 2>&1 || true
-  systemctl restart clamav-daemon > /dev/null 2>&1 || true
+  step "Installing ClamAV for virus scanning (this takes a few minutes)"
+  "$APP_DIR/update.sh" --clamav || die "ClamAV was not installed; see above"
   done_ "ClamAV installed; switch scanning on under Administration → Virus scanning"
 fi
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LoaderCircle, PlugZap, Save, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Download, LoaderCircle, PlugZap, Save, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { api } from './api';
 import { Select } from './Select';
 import { SettingRow } from './SettingRow';
@@ -24,7 +24,20 @@ interface ScanState {
   counts: { pending: number; clean: number; infected: number; unscanned: number };
   infected: InfectedFile[];
   status: { error?: string; at?: number };
+  // Whether ClamAV answers, and whether it can be installed from here.
+  clamav?: {
+    running: boolean;
+    version?: string;
+    install: 'native' | 'docker' | 'manual';
+    can_install: boolean;
+    memory?: number;
+    requested?: boolean;
+    progress?: { state: 'running' | 'success' | 'failed'; message: string };
+  };
 }
+
+// ClamAV needs about this much memory on the machine (MB).
+const clamavMemory = 1900;
 
 const megabyte = 1024 * 1024;
 
@@ -57,6 +70,16 @@ export function AntivirusPanel() {
     const timer = window.setInterval(() => void load().catch(() => {}), 3000);
     return () => window.clearInterval(timer);
   }, [state?.counts.pending, state?.settings.mode]);
+  // While ClamAV is being installed, its progress follows.
+  const installing =
+    !!state?.clamav &&
+    !state.clamav.running &&
+    (!!state.clamav.requested || state.clamav.progress?.state === 'running');
+  useEffect(() => {
+    if (!installing) return;
+    const timer = window.setInterval(() => void load().catch(() => {}), 3000);
+    return () => window.clearInterval(timer);
+  }, [installing]);
   async function run(fn: () => Promise<unknown>, done?: Parameters<typeof message>[0]) {
     setBusy(true);
     setError('');
@@ -70,6 +93,9 @@ export function AntivirusPanel() {
     } finally {
       setBusy(false);
     }
+  }
+  function install() {
+    void run(() => api('/api/admin/antivirus/install', 'POST', {}), 'antivirus.installStarted');
   }
   if (missing) return null;
   if (!state || !form)
@@ -96,6 +122,7 @@ export function AntivirusPanel() {
         <ShieldCheck size={18} /> {t('antivirus.title')}
       </h2>
       <p className="muted">{t('antivirus.intro')}</p>
+      {state.clamav && <ClamavStatus clamav={state.clamav} busy={busy} install={install} />}
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -114,21 +141,24 @@ export function AntivirusPanel() {
             ]}
           />
         </SettingRow>
-        <SettingRow
-          id="antivirus-address"
-          label={t('antivirus.address')}
-          hint={t('antivirus.addressHint')}
-        >
-          <input
+        <details className="antivirus-advanced" open={!!form.address}>
+          <summary>{t('antivirus.advanced')}</summary>
+          <SettingRow
             id="antivirus-address"
-            aria-describedby="antivirus-address-hint"
-            className="mono"
-            value={form.address}
-            placeholder={state.address}
-            maxLength={300}
-            onChange={(e) => setForm({ ...form, address: e.target.value })}
-          />
-        </SettingRow>
+            label={t('antivirus.address')}
+            hint={t('antivirus.addressHint')}
+          >
+            <input
+              id="antivirus-address"
+              aria-describedby="antivirus-address-hint"
+              className="mono"
+              value={form.address}
+              placeholder={state.address}
+              maxLength={300}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+            />
+          </SettingRow>
+        </details>
         <SettingRow
           id="antivirus-size"
           label={t('antivirus.maxSize')}
@@ -220,5 +250,60 @@ export function AntivirusPanel() {
         </>
       )}
     </section>
+  );
+}
+
+// Whether ClamAV runs, and if not, how to get it: installed from here on a
+// native installation, as a container with Docker, by hand otherwise.
+function ClamavStatus({
+  clamav,
+  busy,
+  install,
+}: {
+  clamav: NonNullable<ScanState['clamav']>;
+  busy: boolean;
+  install: () => void;
+}) {
+  if (clamav.running)
+    return (
+      <p role="status" className="success-note">
+        <ShieldCheck size={16} /> {t('antivirus.running', { version: clamav.version ?? '' })}
+      </p>
+    );
+  const progress = clamav.progress;
+  if (clamav.requested || progress?.state === 'running')
+    return (
+      <p role="status" className="notice antivirus-state">
+        <LoaderCircle className="spin" size={16} />{' '}
+        {t('antivirus.installing', {
+          step: progress?.state === 'running' ? progress.message : '…',
+        })}
+      </p>
+    );
+  const lowMemory = !!clamav.memory && clamav.memory < clamavMemory;
+  return (
+    <div className="notice antivirus-state" role="status">
+      <p>
+        <ShieldAlert size={16} /> {t('antivirus.missing')}
+      </p>
+      {progress?.state === 'failed' && (
+        <p className="error">{t('antivirus.installFailed', { reason: progress.message })}</p>
+      )}
+      {clamav.install === 'docker' ? (
+        <p>{t('antivirus.docker')}</p>
+      ) : clamav.can_install && lowMemory ? (
+        <p>{t('antivirus.lowMemory', { memory: formatNumber(clamav.memory ?? 0) })}</p>
+      ) : clamav.can_install ? (
+        <>
+          <p className="muted">{t('antivirus.installHint')}</p>
+          <button type="button" className="secondary" disabled={busy} onClick={install}>
+            <Download size={16} />
+            {t('antivirus.install')}
+          </button>
+        </>
+      ) : (
+        <p>{t('antivirus.manual')}</p>
+      )}
+    </div>
   );
 }

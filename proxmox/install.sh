@@ -106,6 +106,7 @@ defaults() {
   PORT=8080
   PUBLIC_URL=""
   PROXIES=""
+  CLAMAV=0
 }
 
 advanced() {
@@ -122,8 +123,15 @@ advanced() {
   value=$(ask "CPU CORES" "CPU cores:" "$CORES") || die "Cancelled"
   [[ $value =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] || die "Invalid core count"
   CORES=$value
+  # ClamAV keeps its virus database in memory, so it is asked before the memory.
+  if whiptail --backtitle "$TITLE" --title "VIRUS SCANNING" --defaultno --yesno \
+    "Install ClamAV so MagiSend can scan files for viruses?\n\nIt needs about 1.5 GB of extra memory, so the container gets at least 2560 MB. Scanning is switched on afterwards under Administration -> Virus scanning." 13 68; then
+    CLAMAV=1
+    [ "$RAM" -ge 2560 ] || RAM=2560
+  fi
   value=$(ask "RAM" "Memory in MB:" "$RAM") || die "Cancelled"
   [[ $value =~ ^[0-9]+$ ]] && [ "$value" -ge 256 ] || die "Memory must be at least 256 MB"
+  [ "$CLAMAV" = 0 ] || [ "$value" -ge 2048 ] || die "With ClamAV the container needs at least 2048 MB of memory"
   RAM=$value
   value=$(ask "NETWORK BRIDGE" "Network bridge:" "$BRIDGE") || die "Cancelled"
   [[ $value =~ ^[A-Za-z0-9._-]+$ ]] || die "Invalid bridge name"
@@ -219,7 +227,7 @@ NOTES
 summary() {
   echo -e "  ${BOLD}Container${CL}"
   echo -e "  ID ${OR}$CTID${CL} · hostname ${OR}$HOSTNAME_${CL} · ${OR}$CORES${CL} core(s) · ${OR}$RAM${CL} MB · ${OR}$DISK${CL} GB · bridge ${OR}$BRIDGE${CL} · IP ${OR}$NET${CL}${VLAN:+ · VLAN $VLAN}"
-  echo -e "  MagiSend port ${OR}$PORT${CL}${PUBLIC_URL:+ · public address $PUBLIC_URL}"
+  echo -e "  MagiSend port ${OR}$PORT${CL}${PUBLIC_URL:+ · public address $PUBLIC_URL}$([ "$CLAMAV" = 1 ] && echo " · virus scanning with ClamAV")"
   echo
 }
 
@@ -270,14 +278,18 @@ main() {
     printf 'root:%s\n' "$PASSWORD" | pct exec "$CTID" -- chpasswd || die "Setting the root password failed"
   fi
 
-  info "Installing MagiSend (this takes about a minute)"
+  if [ "$CLAMAV" = 1 ]; then
+    info "Installing MagiSend and ClamAV (this takes a few minutes)"
+  else
+    info "Installing MagiSend (this takes about a minute)"
+  fi
   ct bash -c "apt-get update -qq && apt-get -y -qq upgrade > /dev/null && apt-get install -y -qq curl ca-certificates locales > /dev/null" ||
     die "Package installation failed"
   # An English UTF-8 locale, so programs in the container stop warning about
   # the language setting a terminal brings along.
   ct bash -c "sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen > /dev/null 2>&1 && update-locale LANG=en_US.UTF-8" ||
     die "Locale setup failed"
-  ct env MAGISEND_PORT="$PORT" MAGISEND_PUBLIC_URL="$PUBLIC_URL" MAGISEND_TRUSTED_PROXIES="$PROXIES" \
+  ct env MAGISEND_PORT="$PORT" MAGISEND_PUBLIC_URL="$PUBLIC_URL" MAGISEND_TRUSTED_PROXIES="$PROXIES" MAGISEND_WITH_CLAMAV="$CLAMAV" \
     bash -c "curl -fsSL '$INSTALLER' | bash" || die "MagiSend installation failed (see above)"
 
   login_info
@@ -298,6 +310,7 @@ main() {
   code=$(pct exec "$CTID" -- cat /var/lib/magisend/setup-code 2> /dev/null || true)
   echo -e "  Open ${OR}${BOLD}http://${ip}:${PORT}${CL} and create the administrator account."
   [ -n "$code" ] && echo -e "  Setup code: ${OR}${BOLD}${code}${CL} (also in /var/lib/magisend/setup-code in the container)"
+  [ "$CLAMAV" = 1 ] && echo -e "  Switch virus scanning on under ${BOLD}Administration → Virus scanning${CL}."
   [ -n "$PUBLIC_URL" ] && echo -e "  Public address: ${OR}$PUBLIC_URL${CL} (point your reverse proxy to http://${ip}:${PORT})"
   echo -e "  Updates: Administration → Updates, or run ${BOLD}/opt/magisend/update.sh${CL} in the container."
   [ -z "$PASSWORD" ] && echo -e "  The container's console signs in as root without a password. Set one with ${BOLD}pct exec $CTID -- passwd${CL} if others can open it."

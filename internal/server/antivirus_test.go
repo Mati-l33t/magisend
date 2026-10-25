@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -300,5 +301,52 @@ func TestAntivirusSettingsAreChecked(t *testing.T) {
 	}
 	if w := call(a, "POST", "/api/admin/antivirus/test", `{"address":"unix:/nonexistent/clamd.sock"}`, admin); w.Code != 502 {
 		t.Fatal(w.Code)
+	}
+}
+
+// The admin page learns whether ClamAV answers; it can only be installed
+// from there on a native installation with the updater.
+func TestAdminSeesWhetherClamAVRuns(t *testing.T) {
+	a, admin := emailAdmin(t)
+	setScanning(t, a, admin, "off", "unix:"+filepath.Join(t.TempDir(), "nothing.sock"), 50<<20)
+	clamav := decodeObject(t, call(a, "GET", "/api/admin/antivirus", "", admin))["clamav"].(map[string]any)
+	if clamav["running"] != false || clamav["install"] != "manual" || clamav["can_install"] != false {
+		t.Fatal(clamav)
+	}
+	if w := call(a, "POST", "/api/admin/antivirus/install", "{}", admin); w.Code != 409 || !strings.Contains(w.Body.String(), "antivirus_cannot_install") {
+		t.Fatal(w.Code, w.Body)
+	}
+	address, _ := fakeClamd(t, 1<<20)
+	setScanning(t, a, admin, "off", address, 50<<20)
+	clamav = decodeObject(t, call(a, "GET", "/api/admin/antivirus", "", admin))["clamav"].(map[string]any)
+	if clamav["running"] != true || !strings.HasPrefix(fmt.Sprint(clamav["version"]), "ClamAV ") {
+		t.Fatal(clamav)
+	}
+}
+
+// On a native installation the page asks the updater: it leaves the ClamAV
+// request next to the update request that starts the updater.
+func TestInstallingClamAVAsksTheUpdater(t *testing.T) {
+	a, admin := emailAdmin(t)
+	script := filepath.Join(t.TempDir(), "update.sh")
+	os.WriteFile(script, []byte("#!/bin/sh\n# update.sh --clamav installs ClamAV\n"), 0755)
+	original := updaterScript
+	updaterScript = func() string { return script }
+	defer func() { updaterScript = original }()
+	a.updates.Mode, a.updates.Updater = "native", true
+	if memoryMB() > 0 && memoryMB() < 1900 {
+		t.Skip("too little memory here for the install to be allowed")
+	}
+	if w := call(a, "POST", "/api/admin/antivirus/install", "{}", admin); w.Code != 202 {
+		t.Fatal(w.Code, w.Body)
+	}
+	for _, name := range []string{clamavTrigger, updateTrigger} {
+		if _, e := os.Stat(filepath.Join(a.root, name)); e != nil {
+			t.Fatal(name, e)
+		}
+	}
+	clamav := decodeObject(t, call(a, "GET", "/api/admin/antivirus", "", admin))["clamav"].(map[string]any)
+	if clamav["requested"] != true || clamav["can_install"] != true {
+		t.Fatal(clamav)
 	}
 }

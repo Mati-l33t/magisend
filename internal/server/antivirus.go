@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -394,6 +395,94 @@ func (a *App) retryScan(id, blob string, tries int, cause error) {
 	}
 }
 
+// ClamAV can be installed from the admin page on a native installation: the
+// updater (update.sh, which magisend-update.service runs as root) installs it
+// from the system's packages when it finds clamavTrigger next to the update
+// request. The request carries nothing but that, and its progress is written
+// where only root can write.
+const (
+	clamavTrigger    = ".clamav-requested"
+	clamavStatusPath = "/var/lib/magisend-update/clamav-status.json"
+)
+
+type clamavInstall struct {
+	State   string `json:"state"`
+	Message string `json:"message"`
+	Time    string `json:"time"`
+}
+
+type clamavInfo struct {
+	Running bool   `json:"running"`
+	Version string `json:"version,omitempty"`
+	// "native", "docker" or "manual": how MagiSend was installed.
+	Install    string         `json:"install"`
+	CanInstall bool           `json:"can_install"`
+	Memory     int64          `json:"memory,omitempty"` // MB
+	Requested  bool           `json:"requested,omitempty"`
+	Progress   *clamavInstall `json:"progress,omitempty"`
+}
+
+// updaterScript is the updater next to this program.
+var updaterScript = func() string {
+	exe, e := os.Executable()
+	if e != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(exe), "update.sh")
+}
+
+// updaterInstallsClamAV reports whether the updater can install ClamAV (it
+// came with 1.0.10).
+func updaterInstallsClamAV() bool {
+	path := updaterScript()
+	if path == "" {
+		return false
+	}
+	data, e := os.ReadFile(path)
+	return e == nil && strings.Contains(string(data), "--clamav")
+}
+
+// memoryMB is the memory this system (or container) has.
+func memoryMB() int64 {
+	data, e := os.ReadFile("/proc/meminfo")
+	if e != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if fields := strings.Fields(line); len(fields) >= 2 && fields[0] == "MemTotal:" {
+			var kb int64
+			fmt.Sscan(fields[1], &kb)
+			return kb / 1024
+		}
+	}
+	return 0
+}
+
+func (a *App) clamavInfo(ctx context.Context, s ScanSettings) clamavInfo {
+	info := clamavInfo{Install: a.updates.Mode}
+	if info.Install != "native" && info.Install != "docker" {
+		info.Install = "manual"
+	}
+	check, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if version, e := clamdVersion(check, clamdAddress(s)); e == nil {
+		info.Running, info.Version = true, version
+	}
+	if info.Install == "native" {
+		info.CanInstall = a.updates.Updater && updaterInstallsClamAV()
+		info.Memory = memoryMB()
+	}
+	_, e := os.Stat(filepath.Join(a.root, clamavTrigger))
+	info.Requested = e == nil
+	if data, e := os.ReadFile(clamavStatusPath); e == nil && len(data) < 4096 {
+		var progress clamavInstall
+		if json.Unmarshal(data, &progress) == nil {
+			info.Progress = &progress
+		}
+	}
+	return info
+}
+
 type infectedFile struct {
 	FileID    string `json:"file_id"`
 	Name      string `json:"name"`
@@ -404,11 +493,13 @@ type infectedFile struct {
 
 func (a *App) antivirusRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/admin/antivirus", func(w http.ResponseWriter, r *http.Request) {
-		a.mu.Lock()
-		defer a.mu.Unlock()
 		if _, ok := a.require(w, r, true); !ok {
 			return
 		}
+		// Whether ClamAV answers is asked without the lock.
+		clamav := a.clamavInfo(r.Context(), a.scanSettings())
+		a.mu.Lock()
+		defer a.mu.Unlock()
 		s := a.scanSettings()
 		counts := map[string]int64{scanPending: 0, scanClean: 0, scanInfected: 0, scanUnscanned: 0}
 		rows, e := a.db.Query("SELECT state,COUNT(*) FROM file_scans GROUP BY state")
@@ -436,7 +527,7 @@ func (a *App) antivirusRoutes(m *http.ServeMux) {
 		}
 		rows.Close()
 		status, _ := a.scanState.Load().(scanStatus)
-		respond(w, 200, map[string]any{"settings": s, "address": clamdAddress(s), "counts": counts, "infected": infected, "status": status})
+		respond(w, 200, map[string]any{"settings": s, "address": clamdAddress(s), "counts": counts, "infected": infected, "status": status, "clamav": clamav})
 	})
 	m.HandleFunc("PUT /api/admin/antivirus", func(w http.ResponseWriter, r *http.Request) {
 		var b ScanSettings
@@ -464,6 +555,30 @@ func (a *App) antivirusRoutes(m *http.ServeMux) {
 		default:
 		}
 		respond(w, 200, b)
+	})
+	// Asks the updater to install ClamAV.
+	m.HandleFunc("POST /api/admin/antivirus/install", func(w http.ResponseWriter, r *http.Request) {
+		admin, ok := a.require(w, r, true)
+		if !ok {
+			return
+		}
+		if a.updates.Mode != "native" || !a.updates.Updater || !updaterInstallsClamAV() {
+			fail(w, 409, "antivirus_cannot_install")
+			return
+		}
+		if memory := memoryMB(); memory > 0 && memory < 1900 {
+			fail(w, 409, "antivirus_memory")
+			return
+		}
+		stamp := []byte(time.Now().UTC().Format(time.RFC3339) + "\n")
+		if internal(w, os.WriteFile(filepath.Join(a.root, clamavTrigger), stamp, 0600)) {
+			return
+		}
+		if internal(w, os.WriteFile(filepath.Join(a.root, updateTrigger), stamp, 0600)) {
+			return
+		}
+		a.audit(r, admin.Username, "antivirus.install", "")
+		respond(w, 202, map[string]bool{"ok": true})
 	})
 	// Checks that clamd answers at an address, before it is saved.
 	m.HandleFunc("POST /api/admin/antivirus/test", func(w http.ResponseWriter, r *http.Request) {

@@ -4354,3 +4354,18 @@ input.switch:checked::before {
 .danger-icon {
   color: var(--danger);
 }
+.antivirus-state {
+  margin: 12px 0;
+}
+.antivirus-state p {
+  margin: 4px 0;
+}
+.antivirus-state svg,
+.success-note svg {
+  vertical-align: -3px;
+}
+.antivirus-advanced > summary {
+  cursor: pointer;
+  padding: 12px 0;
+  color: var(--muted);
+}

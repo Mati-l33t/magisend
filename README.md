@@ -92,7 +92,7 @@ Run on your **Proxmox host** as root:
 bash <(curl -fsSL https://raw.githubusercontent.com/Mati-l33t/magisend/main/proxmox/install.sh)
 ```
 
-It creates an unprivileged Debian LXC (default 1 core, 512 MB RAM, 4 GB disk, DHCP) and installs MagiSend in it. Uploaded files are stored on that disk unless you add a NAS share; the disk can be grown later in Proxmox, after which you raise the storage budget under **Administration → Limits**. The container's Notes panel links to the project, and signing in to the container shows its address and how to update. In the default install the container's console signs in as root without a password; choose **Advanced** to set a root password instead. Choose **Advanced** to set the container ID, hostname, disk, CPU, RAM, bridge, static IP, VLAN, root password, port and a public address for a reverse proxy.
+It creates an unprivileged Debian LXC (default 1 core, 512 MB RAM, 4 GB disk, DHCP) and installs MagiSend in it. Uploaded files are stored on that disk unless you add a NAS share; the disk can be grown later in Proxmox, after which you raise the storage budget under **Administration → Limits**. The container's Notes panel links to the project, and signing in to the container shows its address and how to update. In the default install the container's console signs in as root without a password; choose **Advanced** to set a root password instead. Choose **Advanced** to set the container ID, hostname, disk, CPU, RAM, bridge, static IP, VLAN, root password, port and a public address for a reverse proxy, and to add virus scanning with ClamAV (which raises the memory to at least 2560 MB).
 
 ### Debian, Ubuntu and other Linux systems
 
@@ -171,10 +171,10 @@ The app keeps its files in a folder named `magisend-files` inside the chosen fol
 
 ## Virus scanning (optional)
 
-MagiSend can check new files with [ClamAV](https://www.clamav.net). ClamAV runs as its own service and needs about **1.5 GB of memory**, so it is off unless you add it:
+MagiSend can check new files with [ClamAV](https://www.clamav.net). ClamAV runs as its own service and needs about **1.5 GB of memory**, so it is off unless you add it. **Administration → Virus scanning** shows whether ClamAV runs, and on an installation made with the installer it has an **Install ClamAV** button, so it can be added at any time later. Otherwise:
 
 - **Debian, Ubuntu:** put `MAGISEND_WITH_CLAMAV=1` in front of `bash` in the install command (it also works on an existing installation), or install `clamav-daemon` yourself and set `StreamMaxLength 100M` in `/etc/clamav/clamd.conf`.
-- **Proxmox LXC:** give the container at least 2.5 GB of memory, then run the Debian command above inside it.
+- **Proxmox LXC:** answer yes to **Virus scanning** in the installer's **Advanced** settings. For an existing container, give it at least 2.5 GB of memory, then run the Debian command above inside it.
 - **Docker:** remove the `#` in front of the `clamav` service and the `clamav_db` volume in `docker-compose.yml` and start again.
 
 Then switch it on under **Administration → Virus scanning**, for all new files or only files received through upload requests and shared links. Uploads are not slowed down: a file is scanned right after it is stored and cannot be downloaded until then, which usually takes a few seconds. A file in which a virus is found stays blocked for everyone until its owner deletes it, and the owner can be told through push notifications. Files stored before scanning was switched on are not scanned. If ClamAV stops answering, new files wait and the administration page says why; switching scanning off releases them.

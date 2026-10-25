@@ -286,5 +286,13 @@
   "antivirus_unreachable": [
     "ClamAV does not answer at that address.",
     "ClamAV svarar inte på den adressen."
+  ],
+  "antivirus_cannot_install": [
+    "ClamAV can only be installed from here on a MagiSend installed with the installer; see the README for the other ways.",
+    "ClamAV kan bara installeras härifrån när MagiSend installerats med installationsprogrammet; se README för andra sätt."
+  ],
+  "antivirus_memory": [
+    "ClamAV needs about 1.5 GB of memory; give this server at least 2.5 GB first.",
+    "ClamAV behöver ungefär 1,5 GB minne; ge den här servern minst 2,5 GB först."
   ]
 }

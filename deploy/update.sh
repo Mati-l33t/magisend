@@ -5,6 +5,10 @@
 # Started as root by magisend-update.service when an administrator presses
 # Update, or run by hand: sudo /opt/magisend/update.sh
 #
+# With --clamav, or when the admin page asked for it (the file
+# .clamav-requested in the data folder), it installs ClamAV for virus
+# scanning from the system's own packages instead, and nothing else.
+#
 # Only a newer release whose SHA256SUMS carries a valid release signature is
 # installed; the installed program checks the signature. Before switching
 # versions the service is stopped and the database files are saved; the
@@ -144,6 +148,56 @@ for dir in "$(dirname "$STATE")" "$(dirname "$(dirname "$STATE")")" /; do
   [ "$(stat -c %u "$dir")" = 0 ] && [ $(($(stat -c %a "$dir" | sed 's/^.*\(..\)$/0\1/') & 022)) = 0 ] ||
     { echo "$dir must be owned by root and writable only by root" >&2; exit 1; }
 done
+
+# ClamAV runs as its own service; MagiSend talks to it over its socket.
+clamav_status() { # state message
+  local tmp
+  tmp=$(mktemp "$STATE/.clamav.XXXXXX")
+  printf '{"state":"%s","message":"%s","time":"%s"}\n' "$1" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$STATE/clamav-status.json"
+  echo "==> $1: $2"
+}
+install_clamav() {
+  local memory conf
+  rm -f "$DATA/.clamav-requested"
+  trap 'clamav_status failed "The ClamAV installation stopped"; exit 1' ERR TERM INT HUP
+  command -v apt-get > /dev/null || { clamav_status failed "ClamAV can only be installed here with apt"; exit 1; }
+  memory=$(awk '/^MemTotal/ {print int($2 / 1024)}' /proc/meminfo)
+  [ "$memory" -ge 1900 ] || { clamav_status failed "ClamAV needs about 1.5 GB of memory and this system has $memory MB"; exit 1; }
+  clamav_status running "Installing ClamAV"
+  { DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav-daemon clamav-freshclam > /dev/null; } ||
+    { clamav_status failed "The ClamAV packages could not be installed"; exit 1; }
+  # Files up to 100 MB are scanned, matching MagiSend's default.
+  conf=/etc/clamav/clamd.conf
+  if grep -q '^StreamMaxLength' "$conf"; then
+    sed -i 's/^StreamMaxLength.*/StreamMaxLength 100M/' "$conf"
+  else
+    echo 'StreamMaxLength 100M' >> "$conf"
+  fi
+  systemctl enable --now clamav-freshclam > /dev/null 2>&1 || true
+  clamav_status running "Downloading the virus database"
+  for _ in $(seq 1 120); do
+    compgen -G '/var/lib/clamav/main.c[lv]d' > /dev/null && break
+    sleep 5
+  done
+  compgen -G '/var/lib/clamav/main.c[lv]d' > /dev/null || { clamav_status failed "The virus database could not be downloaded"; exit 1; }
+  clamav_status running "Starting ClamAV"
+  systemctl enable clamav-daemon > /dev/null 2>&1 || true
+  systemctl restart clamav-daemon > /dev/null 2>&1 || true
+  for _ in $(seq 1 90); do
+    [ -S /run/clamav/clamd.ctl ] && break
+    sleep 2
+  done
+  [ -S /run/clamav/clamd.ctl ] || { clamav_status failed "ClamAV did not start; see: journalctl -u clamav-daemon"; exit 1; }
+  clamav_status success "ClamAV is installed and running"
+  exit 0
+}
+if [ "${1:-}" = --clamav ] || [ -e "$DATA/.clamav-requested" ]; then
+  install_clamav
+fi
+
 trap 'unexpected $LINENO' ERR
 # A stop or kill signal (systemd's timeout, say) also puts the old version back.
 trap 'unexpected signal' TERM INT HUP

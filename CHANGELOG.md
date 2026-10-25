@@ -2,6 +2,12 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+- **Virus scanning:** Administration → Virus scanning shows whether ClamAV runs and, on an installation made with the installer, installs it with one button (through the updater, which runs as root; it takes a few minutes and needs about 1.5 GB of memory). With Docker it explains the compose change instead. The ClamAV address is now under an advanced section, as it is only needed when ClamAV runs elsewhere.
+- **Proxmox installer:** Advanced settings can add ClamAV, which gives the container at least 2560 MB of memory.
+- **Installer:** `MAGISEND_WITH_CLAMAV=1` now also works on an existing installation.
+
 ## 1.0.9
 
 - **Virus scanning (optional):** with ClamAV installed, new files, or only files received through upload requests and shared links, are scanned right after they are stored. A file waiting for its scan cannot be downloaded, previewed or unpacked; one with a virus stays blocked for everyone, earlier versions included, until its owner deletes it. Owners can be told through push notifications, and Administration → Virus scanning shows the scanner's state and the files found. Uploads are not slowed down, files too large to scan are not held back, and if ClamAV stops answering new files wait until it is back or scanning is switched off. The installer sets it up with `MAGISEND_WITH_CLAMAV=1`, and `docker-compose.yml` has a ready `clamav` service.
