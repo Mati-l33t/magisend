@@ -2,7 +2,7 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
-## Unreleased
+## 1.0.9
 
 - **Virus scanning (optional):** with ClamAV installed, new files, or only files received through upload requests and shared links, are scanned right after they are stored. A file waiting for its scan cannot be downloaded, previewed or unpacked; one with a virus stays blocked for everyone, earlier versions included, until its owner deletes it. Owners can be told through push notifications, and Administration → Virus scanning shows the scanner's state and the files found. Uploads are not slowed down, files too large to scan are not held back, and if ClamAV stops answering new files wait until it is back or scanning is switched off. The installer sets it up with `MAGISEND_WITH_CLAMAV=1`, and `docker-compose.yml` has a ready `clamav` service.
 - **Unpacking archives:** besides ZIP, the library now unpacks `.tar`, `.tar.gz` / `.tgz` and `.tar.bz2` files with **Extract here**. Only plain files and folders are taken from them; links, devices and names that would leave the folder are left out, and a tar file is read no further than what the owner's quota, the storage budget and the free disk could hold.
