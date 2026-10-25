@@ -45,7 +45,10 @@ type App struct {
 	install     string
 	// One picture conversion for a preview at a time, and two full decodes.
 	previewConvert, previewDecode chan struct{}
-	stopping                      atomic.Bool
+	// Wakes the virus scanner; the scanner's last error, for the admin page.
+	scanWake  chan struct{}
+	scanState atomic.Value
+	stopping  atomic.Bool
 	// The site URL for links (linkOrigin).
 	siteURL atomic.Value
 	// Library containers a ZIP is being unpacked into.
@@ -160,6 +163,7 @@ func NewApp(root, origin string) (*App, error) {
 	a.thumbInline = make(chan struct{}, 2)
 	a.previewConvert = make(chan struct{}, 1)
 	a.previewDecode = make(chan struct{}, 2)
+	a.scanWake = make(chan struct{}, 1)
 	for i := range a.unlockGates {
 		a.unlockGates[i] = make(chan struct{}, 1)
 	}
@@ -305,6 +309,9 @@ func migrate(db *sql.DB) error {
 		return e
 	}
 	if e = migrateDevices(db); e != nil {
+		return e
+	}
+	if e = migrateAntivirus(db); e != nil {
 		return e
 	}
 	return migrateStorage(db)
@@ -501,6 +508,7 @@ func (a *App) Handler() http.Handler {
 	a.pushRoutes(m)
 	a.extractRoutes(m)
 	a.backupRoutes(m)
+	a.antivirusRoutes(m)
 	a.noteRoutes(m)
 	a.libraryDeleteRoutes(m)
 	a.trashRoutes(m)

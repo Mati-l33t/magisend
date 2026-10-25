@@ -16,6 +16,7 @@ import {
   Save,
   HardDrive,
   Shield,
+  ShieldCheck,
   KeyRound,
   UserX,
   UserCheck,
@@ -27,6 +28,7 @@ import MoreMenu from './MoreMenu';
 import { UpdatePanel, type UpdateInfo } from './Updates';
 import { EmailSettingsPanel } from './Email';
 import { PushAdminPanel } from './Push';
+import { AntivirusPanel } from './Antivirus';
 import { BackupPanel } from './Backups';
 import { InvitesPanel } from './Invites';
 import { ActivityPanel, OverviewPanel } from './AdminOverview';
@@ -248,6 +250,7 @@ export default function Admin({
     { key: 'push', label: t('admin.nav.push'), icon: Bell },
     { key: 'storage', label: t('admin.nav.storage'), icon: HardDrive },
     { key: 'backups', label: t('admin.nav.backups'), icon: DatabaseBackup },
+    { key: 'antivirus', label: t('admin.nav.antivirus'), icon: ShieldCheck },
     { key: 'branding', label: t('admin.nav.branding'), icon: Palette },
     ...(currentUser ? [{ key: 'updates', label: t('admin.nav.updates'), icon: RefreshCw }] : []),
     { key: 'activity', label: t('admin.nav.activity'), icon: Activity },
@@ -803,6 +806,9 @@ export default function Admin({
           </div>
           <div className="admin-section" id="admin-backups">
             <BackupPanel />
+          </div>
+          <div className="admin-section" id="admin-antivirus">
+            <AntivirusPanel />
           </div>
           <div className="admin-section" id="admin-branding">
             <BrandingPanel changed={reload} />

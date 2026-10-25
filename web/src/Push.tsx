@@ -8,7 +8,7 @@ import { formatDate, getLanguage, t, useLanguage, useMessage } from './i18n';
 
 type Kind = 'ntfy' | 'gotify' | 'discord' | 'webhook';
 const kinds: Kind[] = ['ntfy', 'gotify', 'discord', 'webhook'];
-const events = ['downloaded', 'received', 'expiring', 'closed'] as const;
+const events = ['downloaded', 'received', 'expiring', 'closed', 'infected'] as const;
 const placeholders: Record<Kind, string> = {
   ntfy: 'https://ntfy.sh/…',
   gotify: 'https://gotify.example.com',
@@ -43,7 +43,13 @@ export function PushDialog({ close }: { close: () => void }) {
   const [kind, setKind] = useState<Kind>('ntfy');
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
-  const [chosen, setChosen] = useState<string[]>(['downloaded', 'received', 'expiring', 'closed']);
+  const [chosen, setChosen] = useState<string[]>([
+    'downloaded',
+    'received',
+    'expiring',
+    'closed',
+    'infected',
+  ]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useMessage();
   const [note, setNote] = useState('');

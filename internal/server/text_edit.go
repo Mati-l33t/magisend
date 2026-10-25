@@ -87,6 +87,9 @@ func (a *App) readText(f File) ([]byte, bool) {
 	if f.Offset != f.Size || f.Size < 0 || f.Size > textMaxBytes || !textExtensions[strings.ToLower(filepath.Ext(origin))] {
 		return nil, false
 	}
+	if a.scanHeld(f.ID) != "" {
+		return nil, false
+	}
 	file, e := a.openCurrent(f.ID)
 	if e != nil {
 		return nil, false

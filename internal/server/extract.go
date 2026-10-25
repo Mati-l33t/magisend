@@ -201,6 +201,12 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 		if ok && !a.allowed(w, u.ID, "upload", "folders") {
 			ok = false
 		}
+		if ok {
+			if held := a.scanHeld(f.ID); held != "" {
+				ok = false
+				failHeld(w, held)
+			}
+		}
 		format := ""
 		if ok {
 			if format, _ = archiveFormat(f.Name); format == "" {
@@ -232,11 +238,13 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 		} else if ok {
 			// A tar file is read through without the lock, then the file is
 			// looked up again: it may have moved or gone meanwhile.
-			var used int64
-			if internal(w, a.db.QueryRow("SELECT COALESCE(SUM(c.size),0) FROM storage_charges c JOIN files x ON x.id=c.file_id JOIN shares s ON s.id=x.share_id WHERE s.owner=?", u.ID).Scan(&used)) {
+			// It is read through no further than what could be stored: the
+			// owner's quota, the storage budget and the free disk.
+			room, e := a.extractRoom(u)
+			if internal(w, e) {
 				ok = false
 			}
-			limit = max(0, u.Quota-used) + tarSlack
+			limit = max(0, room) + tarSlack
 			size := f.Size
 			if ok {
 				a.mu.Unlock()
@@ -292,9 +300,33 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 			fail(w, 400, "zip_invalid")
 			return
 		}
+		a.queueScans(plan.share, false)
 		a.queueThumbnails(plan.share)
 		respond(w, 201, map[string]any{"folder_id": plan.top, "name": plan.topName, "files": len(plan.entries), "skipped": plan.skipped})
 	})
+}
+
+// extractRoom is how much the owner could still store. Caller holds mu.
+func (a *App) extractRoom(u User) (int64, error) {
+	var used, all, reserved int64
+	if e := a.db.QueryRow("SELECT COALESCE(SUM(c.size),0) FROM storage_charges c JOIN files x ON x.id=c.file_id JOIN shares s ON s.id=x.share_id WHERE s.owner=?", u.ID).Scan(&used); e != nil {
+		return 0, e
+	}
+	if e := a.db.QueryRow("SELECT COALESCE(SUM(size),0) FROM storage_charges").Scan(&all); e != nil {
+		return 0, e
+	}
+	if e := a.db.QueryRow("SELECT COALESCE(SUM(size-offset),0) FROM files").Scan(&reserved); e != nil {
+		return 0, e
+	}
+	budget, e := a.storageBudget()
+	if e != nil {
+		return 0, e
+	}
+	free, e := a.diskFree()
+	if e != nil {
+		return 0, e
+	}
+	return min(u.Quota-used, budget-all, free-(512<<20)-reserved-a.tokenDiskHeld()), nil
 }
 
 type extraction struct {

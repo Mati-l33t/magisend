@@ -356,6 +356,7 @@ func (a *App) apiUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	files = nil
+	a.queueScans(s.ID, false)
 	a.queueThumbnails(s.ID)
 	a.audit(r, u.Username, "share.created", s.Title)
 	link := a.linkOrigin()

@@ -596,6 +596,7 @@ func (a *App) completeRequestUpload(w http.ResponseWriter, r *http.Request) {
 	if internal(w, exec(a, "UPDATE shares SET published=1 WHERE id=?", s.ID)) {
 		return
 	}
+	a.queueScans(s.ID, true)
 	a.queueThumbnails(s.ID)
 	_ = exec(a, "UPDATE upload_requests SET notify_pending=notify_pending+? WHERE id=? AND notify=1", len(s.Files), q.ID)
 	_ = exec(a, "UPDATE upload_requests SET push_pending=push_pending+? WHERE id=?", len(s.Files), q.ID)

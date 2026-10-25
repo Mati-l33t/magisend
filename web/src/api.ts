@@ -37,6 +37,8 @@ export interface SharedFile {
   offset: number;
   backend: string;
   has_thumb: boolean;
+  // Waiting for its virus scan, or a virus was found: not downloadable.
+  scan?: 'pending' | 'infected';
   // The file's folder below a shared folder, such as "Photos/2024".
   folder?: string;
   downloads?: number;

@@ -249,7 +249,7 @@ func (a *App) zipShare(w http.ResponseWriter, r *http.Request) {
 	// A ZIP holds the files that can still be downloaded and counts once for each.
 	available := []File{}
 	for _, f := range s.Files {
-		if !usedUp(f) {
+		if !usedUp(f) && f.Scan == "" {
 			available = append(available, f)
 		}
 	}

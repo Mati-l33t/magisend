@@ -8,6 +8,7 @@
 #   MAGISEND_PUBLIC_URL=https://share.example.com   public address behind a reverse proxy
 #   MAGISEND_TRUSTED_PROXIES=192.168.1.10      reverse proxy address(es)
 #   MAGISEND_VERSION=v1.0.0                    install a specific release (default: latest)
+#   MAGISEND_WITH_CLAMAV=1                     also install ClamAV for virus scanning (needs about 1.5 GB of memory)
 #
 # Running it again on an existing installation updates it to the latest release.
 set -euo pipefail
@@ -105,6 +106,31 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 MAGISEND_LISTEN="0.0.0.0:$PORT" "$APP_DIR/magisend" --healthcheck || die "MagiSend did not start; see: journalctl -u magisend"
+
+# ClamAV runs as its own service; MagiSend talks to it over its local socket.
+if [ "${MAGISEND_WITH_CLAMAV:-}" = 1 ]; then
+  step "Installing ClamAV for virus scanning"
+  command -v apt-get > /dev/null || die "ClamAV is only installed with apt here; install clamav-daemon yourself"
+  memory=$(awk '/^MemTotal/ {print int($2 / 1024)}' /proc/meminfo)
+  [ "$memory" -ge 2000 ] || echo "  Note: ClamAV needs about 1.5 GB of memory and this system has $memory MB."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav-daemon clamav-freshclam > /dev/null
+  # Files up to 100 MB are scanned, matching MagiSend's default.
+  conf=/etc/clamav/clamd.conf
+  if grep -q '^StreamMaxLength' "$conf"; then
+    sed -i 's/^StreamMaxLength.*/StreamMaxLength 100M/' "$conf"
+  else
+    echo 'StreamMaxLength 100M' >> "$conf"
+  fi
+  systemctl enable --now clamav-freshclam > /dev/null 2>&1 || true
+  # clamd starts once the first virus database has been downloaded.
+  for _ in $(seq 1 60); do
+    compgen -G '/var/lib/clamav/main.c[lv]d' > /dev/null && break
+    sleep 5
+  done
+  systemctl enable clamav-daemon > /dev/null 2>&1 || true
+  systemctl restart clamav-daemon > /dev/null 2>&1 || true
+  done_ "ClamAV installed; switch scanning on under Administration → Virus scanning"
+fi
 
 done_ "MagiSend $VERSION is running"
 echo

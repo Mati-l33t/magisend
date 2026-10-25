@@ -153,6 +153,10 @@ func TestExtractTarRefusesBadArchives(t *testing.T) {
 	}
 	id = libraryUpload(t, a, token, "", "bomb.tgz", bomb).Files[0].ID
 	folderCall(t, a, token, "POST", "/api/library/files/"+id+"/extract", `{}`, 413)
+	// The same when the quota is large but the storage budget is not.
+	a.db.Exec("UPDATE users SET quota=? WHERE username='mati'", int64(1)<<50)
+	a.db.Exec("UPDATE settings SET storage_budget=?", 4<<20)
+	folderCall(t, a, token, "POST", "/api/library/files/"+id+"/extract", `{}`, 413)
 	var folders int
 	a.db.QueryRow("SELECT COUNT(*) FROM folders").Scan(&folders)
 	if folders != 0 {

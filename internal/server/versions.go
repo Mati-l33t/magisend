@@ -155,6 +155,7 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 		if internal(w, a.gcEmptyContainers()) {
 			return
 		}
+		a.queueScans(f.ShareID, false)
 		a.queueThumbnails(f.ShareID)
 		respond(w, 200, map[string]any{"version": current + 1, "size": source.Size})
 	})
@@ -277,6 +278,7 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 		}
 		committed = true
 		a.thumbBlocked.Delete(f.ID)
+		a.queueScans(f.ShareID, false)
 		a.queueThumbnails(f.ShareID)
 		respond(w, 200, map[string]any{"version": current + 1, "size": info.Size()})
 	})
@@ -295,6 +297,11 @@ func (a *App) openVersion(w http.ResponseWriter, f LibraryFile, version string) 
 		return nil, "", false
 	}
 	if internal(w, e) {
+		return nil, "", false
+	}
+	// An earlier version can be infected too; it is neither sent nor restored.
+	if held := a.blobHeld(f.ID, blob); held != "" {
+		failHeld(w, held)
 		return nil, "", false
 	}
 	dir, e := a.blobDir(f.Backend)

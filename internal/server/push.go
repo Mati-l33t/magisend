@@ -32,11 +32,12 @@ const (
 	pushReceived   = "received"
 	pushExpiring   = "expiring"
 	pushClosed     = "closed"
+	pushInfected   = "infected"
 	maxPushPerUser = 10
 )
 
 var pushKinds = map[string]bool{"ntfy": true, "gotify": true, "discord": true, "webhook": true}
-var pushEvents = []string{pushDownloaded, pushReceived, pushExpiring, pushClosed}
+var pushEvents = []string{pushDownloaded, pushReceived, pushExpiring, pushClosed, pushInfected}
 
 func migratePush(db *sql.DB) error {
 	if _, e := db.Exec(`CREATE TABLE IF NOT EXISTS push_channels(id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, url TEXT NOT NULL, token TEXT NOT NULL DEFAULT '', events TEXT NOT NULL, language TEXT NOT NULL DEFAULT 'en', created INTEGER NOT NULL, last_sent INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '')`); e != nil {
@@ -87,6 +88,7 @@ var pushText = map[string]map[string]string{
 		"received":      "%d files were uploaded to “%s”",
 		"expiring":      "“%s” expires tomorrow (%s)",
 		"closed":        "“%s” reached its download limit and is closed",
+		"infected":      "A virus was found in “%s”",
 		"test":          "Notifications from {brand} work",
 	},
 	"sv": {
@@ -96,6 +98,7 @@ var pushText = map[string]map[string]string{
 		"received":      "%d filer har laddats upp till ”%s”",
 		"expiring":      "”%s” går ut i morgon (%s)",
 		"closed":        "”%s” har nått nedladdningsgränsen och är stängd",
+		"infected":      "Ett virus hittades i ”%s”",
 		"test":          "Aviseringar från {brand} fungerar",
 	},
 }

@@ -7,6 +7,9 @@ type File struct {
 	Offset   int64  `json:"offset"`
 	Backend  string `json:"backend"`
 	HasThumb bool   `json:"has_thumb"`
+	// "pending" while it waits for a virus scan, "infected" when one was
+	// found; either way it cannot be downloaded.
+	Scan string `json:"scan,omitempty"`
 	// The file's folder below a shared folder, such as "Photos/2024".
 	Folder string `json:"folder,omitempty"`
 	// Download statistics; Remaining is set only when the share has a limit.

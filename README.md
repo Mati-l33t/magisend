@@ -36,7 +36,7 @@
 - **Notes** — write Markdown notes with checklists, autosave and history, keep them in folders and share them as a clean reading page.
 - **Versions** — replace a file with a new version while every link keeps working; earlier versions can be opened and restored.
 - **Trash** — deleted files stay restorable for 30 days.
-- **Unpack ZIP files** into a folder of the library.
+- **Unpack ZIP and tar files** (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`) into a folder of the library.
 - **Previews** — images, PDF documents (rendered in the app, scripts never run), Word and Excel files, video, audio, Markdown and source code with highlighting, recognised by content, not file name.
 - **Text editing** for plain-text files up to 256 KiB, with version history and restore.
 
@@ -50,6 +50,7 @@
 
 **Running it**
 - **Administration** — an overview dashboard, an activity log, accounts, quotas, storage budget, permissions, and **updates from the web interface** with automatic rollback.
+- **Optional virus scanning** with ClamAV: new files, or only files received from others, are held back until they are scanned, and files with a virus are blocked.
 - **Built-in backups** — daily or weekly backups of the database and files, kept and downloadable from the web interface.
 - **Storage on a NAS or second disk** — keep files on a mounted network share (SMB/CIFS, NFS) or another disk, chosen in the web interface. Move existing files there and back with one click; every copy is checked.
 - **Installable app (PWA)** on phones, tablets and desktops — including sharing files straight from the phone's share menu.
@@ -167,6 +168,16 @@ File contents can live on a mounted network share or a second disk, while the da
 Stored files are named by random IDs; their names, owners and folders are in the database, and each storage folder also keeps a small index (`.magisend-index.json`) of them. A file the database does not know, for example after restoring an older backup, is never deleted straight away: it is set aside in an `.unclaimed` folder for 30 days and listed under **Administration → Storage**, where one click puts it back into its owner's library, in its old folder and with its old name.
 
 The app keeps its files in a folder named `magisend-files` inside the chosen folder and checks every few seconds that it is reachable. If the share is unmounted or the NAS is off, that folder is missing: downloads and uploads of files stored there pause with a clear message, while signing in, browsing the library, links and settings keep working. Nothing is written to the local disk by mistake, and everything works again by itself when the share is back. Use SMB/CIFS rather than NFS with a default `hard` mount, which can freeze processes when the server disappears.
+
+## Virus scanning (optional)
+
+MagiSend can check new files with [ClamAV](https://www.clamav.net). ClamAV runs as its own service and needs about **1.5 GB of memory**, so it is off unless you add it:
+
+- **Debian, Ubuntu:** put `MAGISEND_WITH_CLAMAV=1` in front of `bash` in the install command (it also works on an existing installation), or install `clamav-daemon` yourself and set `StreamMaxLength 100M` in `/etc/clamav/clamd.conf`.
+- **Proxmox LXC:** give the container at least 2.5 GB of memory, then run the Debian command above inside it.
+- **Docker:** remove the `#` in front of the `clamav` service and the `clamav_db` volume in `docker-compose.yml` and start again.
+
+Then switch it on under **Administration → Virus scanning**, for all new files or only files received through upload requests and shared links. Uploads are not slowed down: a file is scanned right after it is stored and cannot be downloaded until then, which usually takes a few seconds. A file in which a virus is found stays blocked for everyone until its owner deletes it, and the owner can be told through push notifications. Files stored before scanning was switched on are not scanned. If ClamAV stops answering, new files wait and the administration page says why; switching scanning off releases them.
 
 ## Backups
 

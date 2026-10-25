@@ -39,5 +39,5 @@ test('admin sections, settings search and back to top', async ({ page }) => {
   await expect(page.getByText('No settings match your search.')).toBeVisible();
   await search.press('Escape');
   await expect(page.getByLabel('Default validity (days)')).toBeVisible();
-  await expect(nav.getByRole('link')).toHaveCount(12);
+  await expect(nav.getByRole('link')).toHaveCount(13);
 });

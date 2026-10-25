@@ -270,5 +270,21 @@
   "archive_changed": [
     "The archive changed while it was being read. Try again.",
     "Arkivet ändrades medan det lästes. Försök igen."
+  ],
+  "file_infected": [
+    "A virus was found in this file, so it cannot be opened, downloaded or unpacked.",
+    "Ett virus hittades i den här filen, så den går inte att öppna, ladda ner eller packa upp."
+  ],
+  "file_scanning": [
+    "This file is being checked for viruses. Try again in a moment.",
+    "Den här filen kontrolleras efter virus. Försök igen om en stund."
+  ],
+  "antivirus_invalid": [
+    "Choose off, received files or all files, a socket path (unix:/…) or host:port, and a largest size from 1 MB to 4 GB.",
+    "Välj av, mottagna filer eller alla filer, en socket (unix:/…) eller värd:port och en största storlek från 1 MB till 4 GB."
+  ],
+  "antivirus_unreachable": [
+    "ClamAV does not answer at that address.",
+    "ClamAV svarar inte på den adressen."
   ]
 }

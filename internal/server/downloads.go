@@ -64,6 +64,7 @@ type publicFile struct {
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`
 	HasThumb  bool   `json:"has_thumb"`
+	Scan      string `json:"scan,omitempty"`
 	Folder    string `json:"folder,omitempty"`
 	Remaining *int64 `json:"remaining,omitempty"`
 }
@@ -76,7 +77,7 @@ func publicView(s Share) publicShareView {
 	s.Downloads, s.LastDownload, s.Notify = 0, 0, false
 	files := make([]publicFile, len(s.Files))
 	for i, f := range s.Files {
-		files[i] = publicFile{ID: f.ID, Name: f.Name, Size: f.Size, HasThumb: f.HasThumb, Folder: f.Folder, Remaining: f.Remaining}
+		files[i] = publicFile{ID: f.ID, Name: f.Name, Size: f.Size, HasThumb: f.HasThumb, Scan: f.Scan, Folder: f.Folder, Remaining: f.Remaining}
 	}
 	return publicShareView{Share: s, Files: files}
 }

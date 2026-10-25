@@ -292,9 +292,14 @@ func (a *App) folderRoutes(m *http.ServeMux) {
 			}
 			files = append(files, f)
 		}
-		if !internal(w, rows.Err()) {
-			respond(w, 200, files)
+		if internal(w, rows.Err()) {
+			return
 		}
+		held := a.heldScans()
+		for i := range files {
+			files[i].Scan = held[files[i].ID]
+		}
+		respond(w, 200, files)
 	})
 	m.HandleFunc("PATCH /api/library/files/{file}", func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()

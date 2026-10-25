@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePaged, ShowMore } from './Paging';
+import { ScanNote } from './ScanNote';
 import { Select } from './Select';
 import FilePreview from './FilePreview';
 import { chosenFolder, droppedEntries, type Gathered } from './folderFiles';
@@ -191,6 +192,13 @@ export default function Library({ me, reload }: { me: Me; reload: () => Promise<
   // Not in React's typings: lets the picker choose a whole folder.
   useEffect(() => folderPicker.current?.setAttribute('webkitdirectory', ''), [caps]);
 
+  // While files wait for their virus scan, the list follows.
+  const scanning = files.some((f) => f.scan === 'pending');
+  useEffect(() => {
+    if (!scanning) return;
+    const timer = window.setInterval(() => void load(), 4000);
+    return () => window.clearInterval(timer);
+  }, [scanning]);
   async function load() {
     try {
       const [f, ls, c, unfinished] = await Promise.all([
@@ -644,6 +652,7 @@ export default function Library({ me, reload }: { me: Me; reload: () => Promise<
               ? t('library.receivedFrom', { name: f.received_from })
               : t('library.receivedVia', { title: f.received_via || '' }))}
       </small>
+      <ScanNote scan={f.scan} />
     </div>
   );
   const fileActions = (f: LibraryFile, complete: boolean) => (
@@ -657,7 +666,7 @@ export default function Library({ me, reload }: { me: Me; reload: () => Promise<
       >
         <Star size={17} fill={f.starred ? 'currentColor' : 'none'} />
       </button>
-      {complete && (
+      {complete && !f.scan && (
         <a
           className="icon-button"
           href={'/api/library/files/' + f.id + '/download'}

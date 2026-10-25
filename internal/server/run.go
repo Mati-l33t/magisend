@@ -98,6 +98,7 @@ func Main(buildVersion string, ui fs.FS, errorCatalog []byte) {
 	go a.mailWorker()
 	go a.pushWorker()
 	go a.notificationWorker()
+	go a.scanWorker(ctx)
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()

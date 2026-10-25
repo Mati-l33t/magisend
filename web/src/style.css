@@ -4342,3 +4342,15 @@ input.switch:checked::before {
     padding: 18px;
   }
 }
+
+/* A file waiting for its virus scan, or blocked because one was found. */
+.scan-note {
+  display: block;
+}
+.scan-note svg {
+  vertical-align: -2px;
+}
+.scan-note.infected,
+.danger-icon {
+  color: var(--danger);
+}

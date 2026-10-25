@@ -1,3 +1,4 @@
+import { ScanNote } from './ScanNote';
 import { usePaged, ShowMore } from './Paging';
 import { useState, useEffect, useRef } from 'react';
 import {
@@ -145,6 +146,13 @@ export default function PublicShare({ id }: { id: string }) {
     setRights(null);
     await load();
   }
+  // While files wait for their virus scan, the page follows.
+  const scanning = !!share?.files.some((f) => f.scan === 'pending');
+  useEffect(() => {
+    if (!scanning) return;
+    const timer = window.setInterval(() => void load(), 4000);
+    return () => window.clearInterval(timer);
+  }, [scanning]);
   async function unlock(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -224,7 +232,7 @@ export default function PublicShare({ id }: { id: string }) {
     const button = compact ? 'icon-button' : 'secondary';
     return (
       <div className={compact ? 'row-actions' : 'library-actions'}>
-        {f.remaining === 0 ? (
+        {f.remaining === 0 || f.scan ? (
           <button
             className={button}
             disabled
@@ -464,6 +472,7 @@ export default function PublicShare({ id }: { id: string }) {
                         <span className="file-name">
                           <strong title={f.name}>{f.name}</strong>
                           <small>{formatBytes(f.size)}</small>
+                          <ScanNote scan={f.scan} />
                         </span>
                       </div>
                       {fileActions(f, true)}
@@ -504,6 +513,7 @@ export default function PublicShare({ id }: { id: string }) {
                                 ? t('downloads.remaining', { count: formatNumber(f.remaining) })
                                 : t('downloads.usedUp'))}
                         </small>
+                        <ScanNote scan={f.scan} />
                       </div>
                       {fileActions(f)}
                     </div>

@@ -72,6 +72,10 @@ func (a *App) loadShare(id string) (Share, string, string, error) {
 	if e = a.loadLibraryMembership(&s); e != nil {
 		return s, "", "", e
 	}
+	held := a.heldScans()
+	for i := range s.Files {
+		s.Files[i].Scan = held[s.Files[i].ID]
+	}
 	if e = a.loadDownloads(&s); e != nil {
 		return s, "", "", e
 	}
@@ -490,6 +494,7 @@ func (a *App) shareRoutes(m *http.ServeMux) {
 		}
 		// Decorative thumbnails are generated after the share is durable, and a
 		// failure to generate one never fails or delays the publish itself.
+		a.queueScans(s.ID, false)
 		a.queueThumbnails(s.ID)
 		s.Published = true
 		if !a.isLibraryContainer(s.ID) {
@@ -607,6 +612,11 @@ func (a *App) openReadableFile(w http.ResponseWriter, r *http.Request, authorize
 	if !a.knownLocation(selected.Backend) || selected.Size < 0 {
 		a.mu.Unlock()
 		fail(w, 503, "storage_unverified")
+		return File{}, nil, false
+	}
+	if held := a.scanHeld(selected.ID); held != "" {
+		a.mu.Unlock()
+		failHeld(w, held)
 		return File{}, nil, false
 	}
 	// Never follow symlinks or block on a FIFO substituted for a blob.
