@@ -2,7 +2,7 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
-## Unreleased
+## 1.0.8
 
 Fixes from a third review, of the 1.0.7 changes.
 
