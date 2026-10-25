@@ -204,7 +204,7 @@ install_clamav() {
     sleep 2
   done
   [ -S /run/clamav/clamd.ctl ] || { clamav_status failed start "ClamAV did not start; see: journalctl -u clamav-daemon"; exit 1; }
-  clamav_status success done "ClamAV is installed and running"
+  clamav_status success installed "ClamAV is installed and running"
   exit 0
 }
 # The admin page's request counts once, while it is recent and ClamAV is not
