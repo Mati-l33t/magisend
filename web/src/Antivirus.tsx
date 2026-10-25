@@ -34,6 +34,8 @@ interface ScanState {
     memory?: number;
     requested?: boolean;
     progress?: { state: 'running' | 'success' | 'failed'; step?: string; message: string };
+    // ClamAV here lacks the settings the install gives it.
+    needs_settings?: boolean;
   };
 }
 
@@ -50,8 +52,16 @@ const installSteps: Record<string, string> = {
   memory: 'antivirus.stepMemory',
   start: 'antivirus.stepStart',
 };
-function stepText(progress: { step?: string; message: string }) {
-  const key = progress.step ? installSteps[progress.step] : undefined;
+// A step that failed says what did not work.
+const failedSteps: Record<string, string> = {
+  packages: 'antivirus.failPackages',
+  database: 'antivirus.failDatabase',
+  starting: 'antivirus.stepStart',
+};
+function stepText(progress: { state: string; step?: string; message: string }) {
+  const key = progress.step
+    ? (progress.state === 'failed' && failedSteps[progress.step]) || installSteps[progress.step]
+    : undefined;
   return key ? t(key) : progress.message;
 }
 
@@ -84,10 +94,12 @@ export function AntivirusPanel() {
   // follows.
   const waiting = !!state?.counts.pending && state.settings.mode !== 'off';
   const installing =
-    !!state?.clamav &&
-    !state.clamav.running &&
-    (!!state.clamav.requested || state.clamav.progress?.state === 'running');
-  useFollow(waiting || installing, load);
+    !!state?.clamav && (!!state.clamav.requested || state.clamav.progress?.state === 'running');
+  useFollow(
+    waiting || installing,
+    load,
+    installing ? 'install ' + (state?.clamav?.progress?.step ?? '') : 'scan',
+  );
   async function run(fn: () => Promise<unknown>, done?: Parameters<typeof message>[0]) {
     setBusy(true);
     setError('');
@@ -272,12 +284,6 @@ function ClamavStatus({
   busy: boolean;
   install: () => void;
 }) {
-  if (clamav.running)
-    return (
-      <p role="status" className="success-note">
-        <ShieldCheck size={16} /> {t('antivirus.running', { version: clamav.version ?? '' })}
-      </p>
-    );
   const progress = clamav.progress;
   if (clamav.requested || progress?.state === 'running')
     return (
@@ -287,6 +293,29 @@ function ClamavStatus({
           step: progress?.state === 'running' ? stepText(progress) : '…',
         })}
       </p>
+    );
+  if (clamav.running)
+    return (
+      <>
+        <p role="status" className="success-note">
+          <ShieldCheck size={16} /> {t('antivirus.running', { version: clamav.version ?? '' })}
+        </p>
+        {clamav.needs_settings && (
+          <div className="notice antivirus-state" role="status">
+            <p>
+              <ShieldAlert size={16} /> {t('antivirus.needsSettings')}
+            </p>
+            {clamav.can_install ? (
+              <button type="button" className="secondary" disabled={busy} onClick={install}>
+                <Download size={16} />
+                {t('antivirus.applySettings')}
+              </button>
+            ) : (
+              <p>{t('antivirus.manual')}</p>
+            )}
+          </div>
+        )}
+      </>
     );
   const lowMemory = !!clamav.memory && clamav.memory < clamavMemory;
   return (

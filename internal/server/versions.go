@@ -93,8 +93,10 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 			fail(w, 404, "file_not_found")
 			return
 		}
-		// A file held back by its scan cannot become another file's contents.
-		if held := a.scanHeld(source.ID); held != "" {
+		// An infected file cannot become another file's contents. One still
+		// waiting for its scan can: the scan goes with the bytes, so the file
+		// it replaces waits for it instead.
+		if held := a.scanHeld(source.ID); held == scanInfected {
 			failHeld(w, held)
 			return
 		}

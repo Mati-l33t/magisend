@@ -100,10 +100,6 @@ func (a *App) readText(f File) ([]byte, bool) {
 	return data, e == nil && int64(len(data)) == f.Size && safeText(f.Name, data)
 }
 func (a *App) textState(w http.ResponseWriter, f File) ([]byte, int, bool) {
-	if held := a.scanHeld(f.ID); held != "" {
-		failHeld(w, held)
-		return nil, 0, false
-	}
 	data, ok := a.readText(f)
 	if !ok {
 		respond(w, 415, map[string]string{"error": "Unsupported or unsafe text file", "error_code": "text_unsupported"})
@@ -377,6 +373,12 @@ func (a *App) serveText(w http.ResponseWriter, r *http.Request, f File, user str
 			if !internal(w, rows.Err()) {
 				respond(w, 200, history)
 			}
+			return
+		}
+		// Only the text itself is held back while its scan waits; saving over
+		// it and the list of versions are not.
+		if held := a.scanHeld(f.ID); held != "" {
+			failHeld(w, held)
 			return
 		}
 		respond(w, 200, map[string]any{"text": string(data), "version": version})

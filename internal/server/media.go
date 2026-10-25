@@ -148,7 +148,7 @@ func (a *App) mediaRoutes(m *http.ServeMux) {
 			}
 			f, e := a.libraryReadable(u.ID, r.PathValue("file"))
 			if e != nil {
-				fail(w, 404, "file_not_found")
+				failLibraryRead(w, e)
 				return Share{}, false
 			}
 			return Share{Files: []File{f.File}}, true

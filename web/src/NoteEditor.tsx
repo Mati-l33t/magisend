@@ -82,17 +82,18 @@ export default function NoteEditor({
             setStatus('saved');
             return;
           }
-          const created = await api<NoteRef>('/api/library/notes', 'POST', {
+          const created = await api<NoteRef & { version?: number }>('/api/library/notes', 'POST', {
             title: current.title,
             text: current.text,
             folder_id: folder,
             language: getLanguage(),
           });
-          const state = await api<{ version: number }>(
-            '/api/library/files/' + created.id + '/text',
-          );
+          // Known before anything else is asked, so a failure next never
+          // makes the note a second time.
           current.id = created.id;
-          current.version = state.version;
+          current.version =
+            created.version ??
+            (await api<{ version: number }>('/api/library/files/' + created.id + '/text')).version;
           setId(created.id);
           setName(created.name);
         } else {

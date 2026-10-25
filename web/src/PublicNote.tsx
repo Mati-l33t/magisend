@@ -3,6 +3,7 @@ import { Clock, LoaderCircle } from 'lucide-react';
 import { type Share, type SharedFile } from './api';
 import { formatDate, t, useLanguage, useMessage, message } from './i18n';
 import { noteTitle } from './NoteEditor';
+import { ScanNote } from './ScanNote';
 
 const Markdown = lazy(() => import('./Markdown'));
 
@@ -25,7 +26,11 @@ export default function PublicNote({
   const [error, setError] = useMessage();
   const base =
     '/api/public/' + encodeURIComponent(share.id) + '/files/' + encodeURIComponent(file.id);
+  // Read again once its virus scan is done.
   useEffect(() => {
+    setError('');
+    setText(null);
+    if (file.scan) return;
     const controller = new AbortController();
     fetch(base + '/media', {
       credentials: 'same-origin',
@@ -40,7 +45,7 @@ export default function PublicNote({
       })
       .catch(() => !controller.signal.aborted && setError(message('errors.preview_unsupported')));
     return () => controller.abort();
-  }, [base, version]);
+  }, [base, version, file.scan]);
   return (
     <article className="panel public-note">
       <header className="public-note-head">
@@ -60,7 +65,9 @@ export default function PublicNote({
           {error}
         </div>
       )}
-      {text === null && !error ? (
+      {file.scan ? (
+        <ScanNote scan={file.scan} />
+      ) : text === null && !error ? (
         <p role="status" className="muted">
           <LoaderCircle className="spin" size={16} /> {t('preview.loading')}
         </p>

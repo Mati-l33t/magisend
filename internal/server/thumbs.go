@@ -242,11 +242,13 @@ func (a *App) putThumbnail(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "thumbnail_unavailable")
 		return
 	}
-	var source image.Image
-	if _, ok = rasterPreviewType(data); ok {
-		source, _, e = image.Decode(bytes.NewReader(data))
+	release, ok := a.decodeSlot(r.Context())
+	if !ok {
+		return
 	}
-	if !ok || e != nil {
+	source, ok := decodeRaster(data)
+	release()
+	if !ok {
 		fail(w, 400, "thumbnail_unavailable")
 		return
 	}

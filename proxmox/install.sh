@@ -310,7 +310,13 @@ main() {
   code=$(pct exec "$CTID" -- cat /var/lib/magisend/setup-code 2> /dev/null || true)
   echo -e "  Open ${OR}${BOLD}http://${ip}:${PORT}${CL} and create the administrator account."
   [ -n "$code" ] && echo -e "  Setup code: ${OR}${BOLD}${code}${CL} (also in /var/lib/magisend/setup-code in the container)"
-  [ "$CLAMAV" = 1 ] && echo -e "  Switch virus scanning on under ${BOLD}Administration → Virus scanning${CL}."
+  if [ "$CLAMAV" = 1 ]; then
+    if pct exec "$CTID" -- test -S /run/clamav/clamd.ctl; then
+      echo -e "  Switch virus scanning on under ${BOLD}Administration → Virus scanning${CL}."
+    else
+      echo -e "  ClamAV was not installed (see above); ${BOLD}Administration → Virus scanning${CL} can install it later."
+    fi
+  fi
   [ -n "$PUBLIC_URL" ] && echo -e "  Public address: ${OR}$PUBLIC_URL${CL} (point your reverse proxy to http://${ip}:${PORT})"
   echo -e "  Updates: Administration → Updates, or run ${BOLD}/opt/magisend/update.sh${CL} in the container."
   [ -z "$PASSWORD" ] && echo -e "  The container's console signs in as root without a password. Set one with ${BOLD}pct exec $CTID -- passwd${CL} if others can open it."

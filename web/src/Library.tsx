@@ -195,7 +195,11 @@ export default function Library({ me, reload }: { me: Me; reload: () => Promise<
 
   // While files wait for their virus scan, the list follows.
   const scanning = files.some((f) => f.scan === 'pending');
-  useFollow(scanning, () => load());
+  const waitingIds = files
+    .filter((f) => f.scan === 'pending')
+    .map((f) => f.id)
+    .join(',');
+  useFollow(scanning, () => load(), waitingIds);
   async function load() {
     try {
       const [f, ls, c, unfinished] = await Promise.all([

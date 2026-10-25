@@ -1110,13 +1110,13 @@
   "antivirus.installFailed": "ClamAV installerades inte: {reason}",
   "antivirus.installStarted": "ClamAV installeras.",
   "antivirus.lowMemory": "Den här servern har {memory} MB minne. ClamAV behöver ungefär 1,5 GB utöver MagiSend, så ge den minst 2,5 GB först (i Proxmox: containerns Resources) och kom tillbaka.",
-  "antivirus.docker": "Med Docker körs ClamAV som en egen container: ta bort # framför clamav-raderna i docker-compose.yml och starta MagiSend igen. Första starten laddar ner virusdatabasen och tar några minuter.",
+  "antivirus.docker": "Med Docker körs ClamAV som en egen container: ta bort # framför clamav-raderna och MAGISEND_CLAMAV i docker-compose.yml och starta MagiSend igen. Första starten laddar ner virusdatabasen och tar några minuter.",
   "antivirus.manual": "Installera paketet clamav-daemon på den här servern och sätt StreamMaxLength 100M, MaxFileSize 100M, MaxScanSize 400M och AlertExceedsMax true i /etc/clamav/clamd.conf; README förklarar hur.",
   "antivirus.advanced": "ClamAV på en annan dator (avancerat)",
   "audit.antivirus.install": "bad om att installera ClamAV",
   "errors.antivirus_cannot_install": "ClamAV kan bara installeras härifrån när MagiSend installerats med installationsprogrammet; se README för andra sätt.",
   "errors.antivirus_memory": "ClamAV behöver ungefär 1,5 GB minne; ge den här servern minst 2,5 GB först.",
-  "errors.zip_too_many": "Arkivet innehåller för många filer: en mapp rymmer högst 1 000, och en tar-fil läses upp till 10 000 poster.",
+  "errors.zip_too_many": "Arkivet innehåller för många filer, eller för långa namn sammanlagt: en mapp rymmer högst 1 000 filer, och en tar-fil läses upp till 10 000 poster.",
   "library.extract": "Packa upp här",
   "library.extracted": "Packade upp {count} filer i ”{name}”.",
   "library.extractSkipped": "{count} poster hoppades över: systemfiler, lösenordsskyddade filer eller namn som inte är tillåtna.",
@@ -1206,5 +1206,9 @@
   "antivirus.stepApt": "ClamAV kan bara installeras här med apt",
   "antivirus.stepMemory": "den här servern har för lite minne; ClamAV behöver minst 2,5 GB totalt",
   "antivirus.stepStart": "ClamAV startade inte; se journalctl -u clamav-daemon",
-  "errors.archive_timeout": "Uppackningen tog för lång tid och avbröts. Prova ett mindre arkiv."
+  "errors.archive_timeout": "Uppackningen tog för lång tid och avbröts. Prova ett mindre arkiv.",
+  "antivirus.failPackages": "ClamAV-paketen kunde inte installeras",
+  "antivirus.failDatabase": "virusdatabasen kunde inte laddas ner",
+  "antivirus.needsSettings": "ClamAV på den här servern är inte inställt som MagiSend behöver: filer som det inte kan skanna helt (större än dess gränser, som Debians 25 MB) kan rapporteras som rena. Använd de rekommenderade inställningarna så skannas filer upp till 100 MB helt och resten markeras som oskannade.",
+  "antivirus.applySettings": "Använd rekommenderade inställningar"
 }

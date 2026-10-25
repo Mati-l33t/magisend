@@ -2,8 +2,9 @@ import { useEffect, useRef } from 'react';
 
 // Runs check while active, one call at a time: after 4 seconds, then less
 // often up to once a minute, and no longer after half an hour, so a page left
-// open does not keep asking.
-export function useFollow(active: boolean, check: () => Promise<unknown>) {
+// open does not keep asking. A new key (something new to follow) starts
+// over.
+export function useFollow(active: boolean, check: () => Promise<unknown>, key = '') {
   const latest = useRef(check);
   latest.current = check;
   useEffect(() => {
@@ -29,5 +30,5 @@ export function useFollow(active: boolean, check: () => Promise<unknown>) {
       stopped = true;
       window.clearTimeout(timer);
     };
-  }, [active]);
+  }, [active, key]);
 }

@@ -154,8 +154,8 @@ func tarItems(ctx context.Context, archive io.ReaderAt, size int64, format strin
 		// A name from a long-name header points into that whole header, so
 		// the names kept are copies.
 		item := archiveItem{size: h.Size, dir: h.Typeflag == tar.TypeDir, usable: h.Typeflag == tar.TypeReg && h.Size >= 0}
-		if len(h.Name) <= tarNameLimit && utf8.ValidString(h.Name) {
-			item.name = strings.Clone(h.Name)
+		if name, ok := tarName(h.Name); ok {
+			item.name = name
 		} else {
 			item.usable = false
 		}
@@ -167,6 +167,23 @@ func tarItems(ctx context.Context, archive io.ReaderAt, size int64, format strin
 }
 
 var errTooManyInArchive = errors.New("too many entries in the archive")
+
+// tarName is an entry's name as kept, or false when it is too long. A name
+// that is not UTF-8 is from an old archive and read as Latin-1, as old tar
+// files on Windows and Linux mostly were.
+func tarName(name string) (string, bool) {
+	if len(name) > tarNameLimit {
+		return "", false
+	}
+	if utf8.ValidString(name) {
+		return strings.Clone(name), true
+	}
+	runes := make([]rune, len(name))
+	for i := 0; i < len(name); i++ {
+		runes[i] = rune(name[i])
+	}
+	return string(runes), true
+}
 
 // archivePlan picks what to unpack from an archive's contents. Folders,
 // system files, encrypted entries, links and names that would escape the
@@ -577,7 +594,7 @@ func (plan *extraction) write(ctx context.Context) error {
 		if index != entry.index {
 			continue
 		}
-		if h.Name != entry.item.name || h.Size != entry.item.size || h.Typeflag != tar.TypeReg {
+		if name, _ := tarName(h.Name); name != entry.item.name || h.Size != entry.item.size || h.Typeflag != tar.TypeReg {
 			return errors.New("the archive is not the one that was listed")
 		}
 		if e := writeEntry(entry, func() (io.ReadCloser, error) { return io.NopCloser(reader), nil }); e != nil {

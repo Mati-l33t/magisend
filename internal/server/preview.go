@@ -132,7 +132,13 @@ func (a *App) previewWith(w http.ResponseWriter, r *http.Request, authorize func
 		return
 	}
 	contentType, ok := a.decodePreview(r, data)
-	if !ok {
+	if !ok && isICO(data) {
+		// An icon's pictures are decoded too, so it takes a turn as well.
+		if release, turn := a.decodeSlot(r.Context()); turn {
+			contentType, ok = documentPreview(selected.Name, data)
+			release()
+		}
+	} else if !ok {
 		contentType, ok = documentPreview(selected.Name, data)
 	}
 	if !ok {
@@ -174,12 +180,17 @@ func (a *App) decodeSlot(ctx context.Context) (func(), bool) {
 // rasterSignature reports whether data starts like a picture
 // rasterPreviewType reads.
 func rasterSignature(data []byte) bool {
-	for _, magic := range []string{"\x89PNG\r\n\x1a\n", "\xff\xd8\xff", "GIF87a", "GIF89a", "BM"} {
+	for _, magic := range []string{"\x89PNG\r\n\x1a\n", "\xff\xd8", "GIF87a", "GIF89a", "BM"} {
 		if bytes.HasPrefix(data, []byte(magic)) {
 			return true
 		}
 	}
 	return len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP"
+}
+
+// isICO reports whether data starts like a Windows icon or cursor.
+func isICO(data []byte) bool {
+	return bytes.HasPrefix(data, []byte("\x00\x00\x01\x00")) || bytes.HasPrefix(data, []byte("\x00\x00\x02\x00"))
 }
 
 // convertPreview runs one picture conversion at a time, which can need a few
@@ -246,9 +257,12 @@ func rasterPreviewImage(data []byte) (image.Image, string, bool) {
 		if !boundedGIF(data, config.Width, config.Height) {
 			return nil, "", false
 		}
-		if _, e = gif.DecodeAll(bytes.NewReader(data)); e == nil {
-			// The first frame, drawn on the whole picture.
-			picture, e = gif.Decode(bytes.NewReader(data))
+		var all *gif.GIF
+		if all, e = gif.DecodeAll(bytes.NewReader(data)); e == nil {
+			if len(all.Image) == 0 {
+				return nil, "", false
+			}
+			picture = all.Image[0]
 		}
 	default:
 		return nil, "", false

@@ -6,9 +6,9 @@
 # Update, or run by hand: sudo /opt/magisend/update.sh
 #
 # With --clamav, or when the admin page asked for it (the file
-# .clamav-requested in the data folder, honoured once while ClamAV is not
-# installed), it installs ClamAV for virus scanning from the system's own
-# packages instead, and nothing else.
+# .clamav-requested in the data folder, honoured once when the service starts
+# this), it installs ClamAV for virus scanning from the system's own packages,
+# or repairs it and its settings, instead, and nothing else.
 #
 # Only a newer release whose SHA256SUMS carries a valid release signature is
 # installed; the installed program checks the signature. Before switching
@@ -183,6 +183,7 @@ install_clamav() {
   clamd_set StreamMaxLength 100M
   clamd_set MaxFileSize 100M
   clamd_set MaxScanSize 400M
+  clamd_set PCREMaxFileSize 100M
   clamd_set AlertExceedsMax true
   # A new virus database is loaded next to the old one unless memory is
   # short; then scans wait while it loads.
@@ -207,13 +208,15 @@ install_clamav() {
   clamav_status success installed "ClamAV is installed and running"
   exit 0
 }
-# The admin page's request counts once, while it is recent and ClamAV is not
-# installed yet; otherwise it is dropped and the update goes on.
+# The admin page's request counts once, while it is recent, and only when
+# magisend-update.service started this run (systemd sets INVOCATION_ID), so
+# an update run by hand is never turned into it. It installs or repairs
+# ClamAV and its settings, and does not update MagiSend.
 REQUEST="$DATA/.clamav-requested"
 CLAMAV=0
 [ "${1:-}" = --clamav ] && CLAMAV=1
-if [ -f "$REQUEST" ] && [ ! -L "$REQUEST" ] && [ -n "$(find "$REQUEST" -maxdepth 0 -mmin -20 2> /dev/null)" ] &&
-  ! dpkg-query -W -f='${Status}' clamav-daemon 2> /dev/null | grep -q 'install ok installed'; then
+if [ -n "${INVOCATION_ID:-}" ] && [ -f "$REQUEST" ] && [ ! -L "$REQUEST" ] &&
+  [ -n "$(find "$REQUEST" -maxdepth 0 -mmin -20 2> /dev/null)" ]; then
   CLAMAV=1
 fi
 rm -f -- "$REQUEST" 2> /dev/null || true

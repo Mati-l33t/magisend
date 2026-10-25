@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -128,6 +129,9 @@ func (a *App) libraryFile(user, id string) (LibraryFile, error) {
 	return f, e
 }
 
+// errUploadIncomplete is a library file whose upload was not finished.
+var errUploadIncomplete = errors.New("the upload is not complete")
+
 // libraryReadable is libraryFile for serving a file's bytes: a file whose
 // upload was not finished (an upload request not completed yet, say) is not
 // served, as its scan has not been queued.
@@ -138,9 +142,18 @@ func (a *App) libraryReadable(user, id string) (LibraryFile, error) {
 	}
 	var published bool
 	if e = a.db.QueryRow("SELECT published FROM shares WHERE id=?", f.ShareID).Scan(&published); e == nil && !published {
-		e = sql.ErrNoRows
+		e = errUploadIncomplete
 	}
 	return f, e
+}
+
+// failLibraryRead answers for a file libraryReadable did not give.
+func failLibraryRead(w http.ResponseWriter, e error) {
+	if errors.Is(e, errUploadIncomplete) {
+		fail(w, 409, "upload_incomplete")
+		return
+	}
+	fail(w, 404, "file_not_found")
 }
 func (a *App) folderRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/library/uploads", a.createShare)
@@ -400,7 +413,7 @@ func (a *App) folderRoutes(m *http.ServeMux) {
 			}
 			f, e := a.libraryReadable(u.ID, r.PathValue("file"))
 			if e != nil {
-				fail(w, 404, "file_not_found")
+				failLibraryRead(w, e)
 				return Share{}, false
 			}
 			return Share{Files: []File{f.File}}, true

@@ -135,11 +135,12 @@ func (a *App) queueFileScan(fileID string, received bool) {
 }
 
 func (a *App) queueScansWhere(where, id string, received bool) {
-	mode := a.scanSettings().Mode
-	if mode == scanOff || mode == scanReceived && !received {
+	// When the setting cannot be read, the files are queued all the same.
+	s, e := a.readScanSettings()
+	if e == nil && (s.Mode == scanOff || s.Mode == scanReceived && !received) {
 		return
 	}
-	_, e := a.db.Exec(`INSERT OR IGNORE INTO file_scans(file_id,blob,state,queued) SELECT f.id,`+currentBlobSQL+`,'pending',? FROM files f WHERE `+where+` AND f.offset=f.size`, time.Now().Unix(), id)
+	_, e = a.db.Exec(`INSERT OR IGNORE INTO file_scans(file_id,blob,state,queued) SELECT f.id,`+currentBlobSQL+`,'pending',? FROM files f WHERE `+where+` AND f.offset=f.size`, time.Now().Unix(), id)
 	if e != nil {
 		log.Printf("antivirus: %s could not be queued: %v", id, e)
 		return
@@ -166,6 +167,9 @@ func (a *App) heldScans() map[string]string {
 		if rows.Scan(&id, &state) == nil && (state == scanInfected || waiting) {
 			held[id] = state
 		}
+	}
+	if e := rows.Err(); e != nil {
+		log.Printf("antivirus: scan states could not be read: %v", e)
 	}
 	return held
 }
@@ -258,6 +262,8 @@ func clamdScan(ctx context.Context, address string, data io.Reader, size int64) 
 	_ = conn.SetDeadline(time.Now().Add(time.Minute + time.Duration(size/(2<<20))*time.Second))
 	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
 	defer stop()
+	var written int64
+	var local error // reading the file failed: tried again, never "too large"
 	sent := func() error {
 		if _, e := conn.Write([]byte("zINSTREAM\x00")); e != nil {
 			return e
@@ -270,17 +276,22 @@ func clamdScan(ctx context.Context, address string, data io.Reader, size int64) 
 				if _, e := conn.Write(buf[:4+n]); e != nil {
 					return e
 				}
+				written += int64(n)
 			}
 			if re == io.EOF || re == io.ErrUnexpectedEOF {
 				break
 			}
 			if re != nil {
+				local = re
 				return re
 			}
 		}
 		_, e := conn.Write([]byte{0, 0, 0, 0})
 		return e
 	}()
+	if local != nil {
+		return "", local
+	}
 	// clamd closes the connection once a stream passes its limit, so its
 	// answer is read even when sending failed.
 	reply, re := clamdReply(conn)
@@ -299,10 +310,10 @@ func clamdScan(ctx context.Context, address string, data io.Reader, size int64) 
 			signature = "unknown"
 		}
 		return signature, nil
-	case sent != nil && re != nil && size > scanChunk && clamdAnswers(address):
-		// Over TCP, clamd's answer to a stream past its limit can be lost
-		// when it closes the connection; it still answers, so the stream
-		// was refused, not lost.
+	case re != nil && written > scanChunk && cutOff(sent, re) && clamdAnswers(address):
+		// clamd's answer to a stream past its limit can be lost when it
+		// closes the connection; it still answers, so the stream was
+		// refused, not lost.
 		return "", errScanTooLarge
 	case sent != nil:
 		return "", sent
@@ -310,6 +321,13 @@ func clamdScan(ctx context.Context, address string, data io.Reader, size int64) 
 		return "", re
 	}
 	return "", errors.New("clamd: " + reply)
+}
+
+// cutOff reports whether clamd closed the connection while the stream was
+// sent or before its answer was read; a timeout is not that.
+func cutOff(sent, read error) bool {
+	closed := func(e error) bool { return errors.Is(e, syscall.EPIPE) || errors.Is(e, syscall.ECONNRESET) }
+	return closed(sent) || sent == nil && closed(read)
 }
 
 // clamdAnswers checks that clamd is up, after a stream was cut off.
@@ -489,6 +507,59 @@ type clamavInfo struct {
 	Memory     int64          `json:"memory,omitempty"` // MB
 	Requested  bool           `json:"requested,omitempty"`
 	Progress   *clamavInstall `json:"progress,omitempty"`
+	// ClamAV on this server would pass files it cannot scan whole as clean,
+	// or stops below MagiSend's limit; the install fixes its settings.
+	NeedsSettings bool `json:"needs_settings,omitempty"`
+}
+
+// clamdConfPath is the Debian and Ubuntu clamd configuration.
+var clamdConfPath = "/etc/clamav/clamd.conf"
+
+// clamdNeedsSettings reports whether the local clamd lacks the settings
+// the install gives it: files over its limits reported (AlertExceedsMax),
+// and files up to maxSize (at most 100 MB) scanned whole.
+func clamdNeedsSettings(maxSize int64) bool {
+	data, e := os.ReadFile(clamdConfPath)
+	if e != nil || len(data) > 1<<20 {
+		return false
+	}
+	values := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if f := strings.Fields(line); len(f) >= 2 && !strings.HasPrefix(f[0], "#") {
+			values[f[0]] = strings.ToLower(f[1])
+		}
+	}
+	if alert := values["AlertExceedsMax"]; alert != "true" && alert != "yes" {
+		return true
+	}
+	want := min(maxSize, defaultScanMaxSize)
+	for _, key := range []string{"MaxFileSize", "StreamMaxLength"} {
+		if n, ok := clamdSize(values[key]); ok && n > 0 && n < want {
+			return true
+		}
+	}
+	return false
+}
+
+// clamdSize reads a clamd size such as 25M, 1G, 4000K or 1048576.
+func clamdSize(value string) (int64, bool) {
+	if value == "" {
+		return 0, false
+	}
+	unit := int64(1)
+	switch value[len(value)-1] {
+	case 'k':
+		unit, value = 1<<10, value[:len(value)-1]
+	case 'm':
+		unit, value = 1<<20, value[:len(value)-1]
+	case 'g':
+		unit, value = 1<<30, value[:len(value)-1]
+	}
+	var n int64
+	if _, e := fmt.Sscan(value, &n); e != nil || n < 0 {
+		return 0, false
+	}
+	return n * unit, true
 }
 
 // updaterScript is the updater next to this program.
@@ -540,6 +611,10 @@ func (a *App) clamavInfo(ctx context.Context, s ScanSettings) clamavInfo {
 	if info.Install == "native" {
 		info.CanInstall = a.updates.Updater && updaterInstallsClamAV()
 		info.Memory = memoryMB()
+		// Only ClamAV on this server can be checked.
+		if info.Running && clamdAddress(s) == defaultClamdAddress {
+			info.NeedsSettings = clamdNeedsSettings(s.MaxSize)
+		}
 	}
 	if stat, e := os.Stat(filepath.Join(a.root, clamavTrigger)); e == nil {
 		info.Requested = time.Since(stat.ModTime()) < clamavStale

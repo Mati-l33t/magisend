@@ -250,6 +250,7 @@ func (a *App) zipShare(w http.ResponseWriter, r *http.Request) {
 	// A ZIP holds the files that can still be downloaded and counts once for each.
 	available := []File{}
 	held := ""
+	var left []string // files held back by their scan, named in the ZIP
 	for _, f := range s.Files {
 		switch {
 		case usedUp(f):
@@ -257,6 +258,7 @@ func (a *App) zipShare(w http.ResponseWriter, r *http.Request) {
 			if held != scanInfected {
 				held = f.Scan
 			}
+			left = append(left, zipPath(f))
 		default:
 			available = append(available, f)
 		}
@@ -345,14 +347,13 @@ func (a *App) zipShare(w http.ResponseWriter, r *http.Request) {
 			file, e = a.openCurrent(f.ID)
 		}
 		a.mu.Unlock()
+		if errors.Is(e, errScanHeld) {
+			left = append(left, zipPath(f))
+		}
 		if e != nil {
 			continue
 		}
-		name := f.Name
-		if f.Folder != "" {
-			name = f.Folder + "/" + f.Name
-		}
-		entry, e := z.CreateHeader(&zip.FileHeader{Name: uniqueName(name), Method: zip.Store})
+		entry, e := z.CreateHeader(&zip.FileHeader{Name: uniqueName(zipPath(f)), Method: zip.Store})
 		if e == nil {
 			_, e = io.Copy(entry, file)
 		}
@@ -361,5 +362,19 @@ func (a *App) zipShare(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if len(left) > 0 {
+		note := "These files are not in this ZIP: they are being checked for viruses, or a virus was found in them.\n\n" + strings.Join(left, "\n") + "\n"
+		if entry, e := z.CreateHeader(&zip.FileHeader{Name: uniqueName("Not included.txt"), Method: zip.Deflate}); e == nil {
+			_, _ = io.WriteString(entry, note)
+		}
+	}
 	z.Close()
+}
+
+// zipPath is a file's name in a ZIP of its share, below its folder.
+func zipPath(f File) string {
+	if f.Folder != "" {
+		return f.Folder + "/" + f.Name
+	}
+	return f.Name
 }

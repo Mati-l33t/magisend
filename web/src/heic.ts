@@ -82,7 +82,10 @@ export async function heifToJPEG(blob: Blob): Promise<Blob> {
 
 // A thumbnail needs far fewer pixels than the viewer: only photos up to
 // about 50 megapixels are decoded, and scaled straight from the pixels to
-// width × height without a full-size canvas.
+// width × height without a full-size canvas. The decoding itself is still
+// full size and on the page's own thread (about 4 bytes a pixel, so up to
+// some 200 MB for a moment); a file that crashed the tab is given up on
+// after two tries (see thumbMaker.ts).
 const thumbMaxPixels = 50_000_000;
 
 export async function heifThumb(blob: Blob, edge: number): Promise<HTMLCanvasElement> {

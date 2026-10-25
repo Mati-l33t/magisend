@@ -150,7 +150,11 @@ export default function PublicShare({ id }: { id: string }) {
   // While files wait for their virus scan, the page follows.
   // Only the share is fetched again, so nothing open on the page is reset.
   const scanning = !!share?.files.some((f) => f.scan === 'pending');
-  useFollow(scanning, async () => setShare(await api<Share>('/api/public/' + id)));
+  const waitingIds = (share?.files ?? [])
+    .filter((f) => f.scan === 'pending')
+    .map((f) => f.id)
+    .join(',');
+  useFollow(scanning, async () => setShare(await api<Share>('/api/public/' + id)), id + waitingIds);
   async function unlock(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);

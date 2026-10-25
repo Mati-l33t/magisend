@@ -262,11 +262,14 @@ func TestScanFollowsVersionsAndBlocksExtracting(t *testing.T) {
 	scanAllNow(a)
 	folderCall(t, a, admin, "POST", "/api/library/files/"+f.ID+"/extract", `{}`, 403)
 
-	// Replaced by a clean version, which brings its scan: usable; the
-	// infected first version stays blocked in the history.
+	// Replaced by a new version still waiting for its scan: the file waits
+	// with it, then is usable; the infected first version stays blocked in
+	// the history.
 	if w := replaceUpload(t, a, admin, f.ID, "clean.zip", zipOf(t, map[string]string{"ok.txt": "ok"})); w.Code != 200 {
 		t.Fatal(w.Code, w.Body)
 	}
+	folderCall(t, a, admin, "POST", "/api/library/files/"+f.ID+"/extract", `{}`, 423)
+	scanAllNow(a)
 	folderCall(t, a, admin, "POST", "/api/library/files/"+f.ID+"/extract", `{}`, 201)
 	if w := call(a, "GET", "/api/library/files/"+f.ID+"/history/1", "", admin); w.Code != 403 {
 		t.Fatal("an infected earlier version was sent", w.Code)
@@ -276,12 +279,11 @@ func TestScanFollowsVersionsAndBlocksExtracting(t *testing.T) {
 	}
 }
 
-// replaceUpload uploads data and, once it is scanned, makes it the new
-// version of file.
+// replaceUpload uploads data and makes it the new version of file at once,
+// as the library does.
 func replaceUpload(t *testing.T, a *App, token, file, name, data string) *httptest.ResponseRecorder {
 	t.Helper()
 	source := libraryUpload(t, a, token, "", name, data).Files[0].ID
-	scanAllNow(a)
 	return call(a, "POST", "/api/library/files/"+file+"/replace", `{"source":"`+source+`"}`, token)
 }
 

@@ -526,7 +526,9 @@ func (a *App) makeBackup(now time.Time, run int) ([]string, error) {
 		return nil, errors.New("the backup file cannot be written")
 	}
 	done = true
-	pruneBackups(dir, a.ownBackup, s.Keep)
+	// Archives under an earlier ID are listed but only removed by hand: that
+	// ID may be another machine's again.
+	pruneBackups(dir, func(id string) bool { return id == "" || id == a.install }, s.Keep)
 	return missing, nil
 }
 

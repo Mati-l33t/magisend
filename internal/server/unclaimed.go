@@ -427,6 +427,8 @@ func (a *App) restoreUnclaimed(f UnclaimedFile, admin User, n int) error {
 		return e
 	}
 	_ = os.Remove(held + ".json")
+	// Where the file came from is not known, so it counts as received.
+	a.queueFileScan(id, true)
 	return nil
 }
 

@@ -15,9 +15,9 @@ const failedKey = 'magisend.thumbFailed';
 const tryingKey = 'magisend.thumbTrying';
 // Tries that never finished (the tab crashed) before a file is given up on,
 // so a file that crashes the tab is not tried on every visit. A tab closed or
-// reloaded meanwhile does not count, and after a day the file is tried again.
+// reloaded meanwhile does not count, and after a week the file is tried again.
 const maxTries = 2;
-const tryForget = 24 * 60 * 60 * 1000;
+const tryForget = 7 * 24 * 60 * 60 * 1000;
 
 type Source = { server: { shareId: string; fileId: string }; local?: File };
 
@@ -47,8 +47,12 @@ function fileUrl(source: { shareId: string; fileId: string }, part = '') {
   );
 }
 
+// The file is held back by its virus scan: tried again once it is done.
+class HeldBack extends Error {}
+
 async function fetched(url: string, limit: number) {
   const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+  if (response.status === 423 || response.status === 403) throw new HeldBack('held back');
   if (!response.ok || Number(response.headers.get('Content-Length') || 0) > limit)
     throw new Error('unavailable');
   const blob = await response.blob();
@@ -132,7 +136,18 @@ async function drawn(source: Source, name: string): Promise<HTMLCanvasElement> {
   }
   // A video is always read from the server: the page's policy does not let
   // players use local blob URLs, and the player only fetches the parts it needs.
-  if (kind === 'video') return videoFrame(fileUrl(source.server, '/media'));
+  if (kind === 'video') {
+    // A video is read by the player, which cannot tell a held-back file from
+    // a broken one, so that is asked first.
+    const url = fileUrl(source.server, '/media');
+    const probe = await fetch(url, {
+      method: 'HEAD',
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (probe.status === 423 || probe.status === 403) throw new HeldBack('held back');
+    return videoFrame(url);
+  }
   const blob = source.local ?? (await fetched(fileUrl(source.server), maxImageBytes));
   if (blob.size > maxImageBytes) throw new Error('too large');
   return imageFrame(blob, name);
@@ -224,8 +239,8 @@ async function make(shareId: string, fileId: string, name: string, local?: File)
     });
     if (!response.ok) throw new Error('refused');
     return true;
-  } catch {
-    rememberFailure(fileId);
+  } catch (e) {
+    if (!(e instanceof HeldBack)) rememberFailure(fileId);
     return false;
   } finally {
     endTry(fileId);

@@ -24,8 +24,10 @@ export default function FileThumb({
   file: SharedFile;
   owner?: boolean;
 }) {
+  // Not while the file waits for its virus scan: it cannot be read yet.
   const drawable =
     owner &&
+    !file.scan &&
     !file.has_thumb &&
     browserThumbName.test(file.name) &&
     (file.offset ?? file.size) === file.size;

@@ -95,6 +95,8 @@ type Note struct {
 	Auto     bool   `json:"auto"`
 	Starred  bool   `json:"starred"`
 	Excerpt  string `json:"excerpt"`
+	// Only when it was just made: the text's version, for the editor.
+	Version int `json:"version,omitempty"`
 }
 
 func isNote(name string) bool {
@@ -131,8 +133,13 @@ func (a *App) noteRoutes(m *http.ServeMux) {
 			list = append(list, n)
 		}
 		rows.Close()
-		// The opening of each note, for the list.
+		// The opening of each note, for the list; not of one held back by its
+		// scan.
+		held := a.heldScans()
 		for i := range list {
+			if held[list[i].ID] != "" {
+				continue
+			}
 			if file, e := a.openCurrent(list[i].ID); e == nil {
 				head := make([]byte, noteExcerpt)
 				n, _ := io.ReadFull(file, head)
@@ -241,6 +248,7 @@ func (a *App) noteRoutes(m *http.ServeMux) {
 		}
 		committed = true
 		a.queueFileScan(n.ID, false)
+		n.Version = 1
 		respond(w, 201, n)
 	})
 	// Saves a note's text and title together; the text is versioned like any
