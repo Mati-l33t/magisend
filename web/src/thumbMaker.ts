@@ -13,9 +13,11 @@ const maxImageBytes = 50 * 1024 * 1024;
 const waitLimit = 20_000;
 const failedKey = 'magisend.thumbFailed';
 const tryingKey = 'magisend.thumbTrying';
-// Tries that never finished (the tab closed or crashed) before a file is
-// given up on, so a file that crashes the tab is not tried on every visit.
+// Tries that never finished (the tab crashed) before a file is given up on,
+// so a file that crashes the tab is not tried on every visit. A tab closed or
+// reloaded meanwhile does not count, and after a day the file is tried again.
 const maxTries = 2;
+const tryForget = 24 * 60 * 60 * 1000;
 
 type Source = { server: { shareId: string; fileId: string }; local?: File };
 
@@ -145,7 +147,7 @@ function failed(): string[] {
   }
 }
 
-function trying(): Record<string, number> {
+function trying(): Record<string, unknown> {
   try {
     const tries = JSON.parse(localStorage.getItem(tryingKey) || '{}');
     return tries && typeof tries === 'object' && !Array.isArray(tries) ? tries : {};
@@ -154,11 +156,28 @@ function trying(): Record<string, number> {
   }
 }
 
+// Each file's unfinished tries, as [count, when the last one started].
+function triesOf(fileId: string): [number, number] {
+  const entry = trying()[fileId];
+  if (!Array.isArray(entry)) return [0, 0];
+  const [count, at] = entry.map(Number);
+  return Date.now() - at > tryForget ? [0, 0] : [count || 0, at || 0];
+}
+
+// The try running now, ended when the page is left normally.
+let current: string | null = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (current) endTry(current);
+  });
+}
+
 // Counts a try before it starts; done clears it again.
 function startTry(fileId: string) {
+  current = fileId;
   try {
     const tries = trying();
-    tries[fileId] = (Number(tries[fileId]) || 0) + 1;
+    tries[fileId] = [triesOf(fileId)[0] + 1, Date.now()];
     const kept = Object.entries(tries).slice(-100);
     localStorage.setItem(tryingKey, JSON.stringify(Object.fromEntries(kept)));
   } catch {
@@ -167,6 +186,7 @@ function startTry(fileId: string) {
 }
 
 function endTry(fileId: string) {
+  if (current === fileId) current = null;
   try {
     const tries = trying();
     delete tries[fileId];
@@ -177,7 +197,7 @@ function endTry(fileId: string) {
 }
 
 function givenUp(fileId: string) {
-  return failed().includes(fileId) || (Number(trying()[fileId]) || 0) >= maxTries;
+  return failed().includes(fileId) || triesOf(fileId)[0] >= maxTries;
 }
 
 function rememberFailure(fileId: string) {

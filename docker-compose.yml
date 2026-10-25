@@ -20,10 +20,11 @@ services:
       # the log (docker compose logs magisend). To choose it yourself instead:
       # MAGISEND_SETUP_CODE: pick-a-long-code
       # Where ClamAV listens, for the optional clamav service below.
-      MAGISEND_CLAMAV: clamav:3310
+      # MAGISEND_CLAMAV: clamav:3310
 
   # Optional virus scanning. It needs about 1.5 GB of memory: remove the # in
-  # front of the lines below, start again, then switch scanning on under
+  # front of the lines below and of MAGISEND_CLAMAV above, start again, then
+  # switch scanning on under
   # Administration → Virus scanning. The first start downloads the virus
   # database and takes a few minutes.
   # clamav:

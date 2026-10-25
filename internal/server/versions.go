@@ -93,6 +93,11 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 			fail(w, 404, "file_not_found")
 			return
 		}
+		// A file held back by its scan cannot become another file's contents.
+		if held := a.scanHeld(source.ID); held != "" {
+			failHeld(w, held)
+			return
+		}
 		// Every version of a file lives in the same storage location.
 		if source.Backend != f.Backend {
 			respond(w, 409, map[string]string{"error": "The new version was stored in another storage location", "error_code": "replace_location"})
@@ -141,6 +146,8 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 			{"UPDATE files SET size=?,offset=? WHERE id=?", []any{source.Size, source.Size, f.ID}},
 			{"DELETE FROM thumbnails WHERE file_id=?", []any{f.ID}},
 			{"UPDATE thumbnails SET file_id=? WHERE file_id=?", []any{f.ID, source.ID}},
+			// Its scan goes with the bytes.
+			{"UPDATE OR IGNORE file_scans SET file_id=? WHERE file_id=? AND blob=?", []any{f.ID, source.ID, source.ID}},
 			// The uploaded file's row goes; its bytes now belong to f's history.
 			{"DELETE FROM files WHERE id=?", []any{source.ID}},
 		} {
@@ -155,7 +162,7 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 		if internal(w, a.gcEmptyContainers()) {
 			return
 		}
-		a.queueScans(f.ShareID, false)
+		a.queueFileScan(f.ID, false)
 		a.queueThumbnails(f.ShareID)
 		respond(w, 200, map[string]any{"version": current + 1, "size": source.Size})
 	})
@@ -278,7 +285,7 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 		}
 		committed = true
 		a.thumbBlocked.Delete(f.ID)
-		a.queueScans(f.ShareID, false)
+		a.queueFileScan(f.ID, false)
 		a.queueThumbnails(f.ShareID)
 		respond(w, 200, map[string]any{"version": current + 1, "size": info.Size()})
 	})

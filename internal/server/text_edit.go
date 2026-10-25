@@ -87,9 +87,6 @@ func (a *App) readText(f File) ([]byte, bool) {
 	if f.Offset != f.Size || f.Size < 0 || f.Size > textMaxBytes || !textExtensions[strings.ToLower(filepath.Ext(origin))] {
 		return nil, false
 	}
-	if a.scanHeld(f.ID) != "" {
-		return nil, false
-	}
 	file, e := a.openCurrent(f.ID)
 	if e != nil {
 		return nil, false
@@ -103,6 +100,10 @@ func (a *App) readText(f File) ([]byte, bool) {
 	return data, e == nil && int64(len(data)) == f.Size && safeText(f.Name, data)
 }
 func (a *App) textState(w http.ResponseWriter, f File) ([]byte, int, bool) {
+	if held := a.scanHeld(f.ID); held != "" {
+		failHeld(w, held)
+		return nil, 0, false
+	}
 	data, ok := a.readText(f)
 	if !ok {
 		respond(w, 415, map[string]string{"error": "Unsupported or unsafe text file", "error_code": "text_unsupported"})
@@ -232,6 +233,10 @@ func (a *App) storeText(w http.ResponseWriter, f File, user string, current int,
 	if replaced != "" {
 		_ = a.discardStored(filepath.Join(store, replaced))
 	}
+	// Text written by someone other than the owner counts as received.
+	var owner string
+	_ = a.db.QueryRow("SELECT s.owner FROM files f JOIN shares s ON s.id=f.share_id WHERE f.id=?", f.ID).Scan(&owner)
+	a.queueFileScan(f.ID, user != owner)
 	return current + 1, true
 }
 
@@ -410,6 +415,11 @@ func (a *App) serveText(w http.ResponseWriter, r *http.Request, f File, user str
 		e = a.db.QueryRow("SELECT blob,name,size FROM text_versions WHERE file_id=? AND number=?", f.ID, b.Restore).Scan(&blob, &name, &size)
 		if e != nil || !validToken(blob) || size > textMaxBytes {
 			fail(w, 404, "not_found")
+			return
+		}
+		// An earlier version can be infected too.
+		if held := a.blobHeld(f.ID, blob); held != "" {
+			failHeld(w, held)
 			return
 		}
 		path, e := a.fileBlob(f.ID, blob)

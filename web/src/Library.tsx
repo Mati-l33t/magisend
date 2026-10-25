@@ -58,6 +58,7 @@ import Notes from './Notes';
 import NoteEditor, { type NoteRef } from './NoteEditor';
 import { thumbsFromUpload } from './thumbMaker';
 import TextEditor from './TextEditor';
+import { useFollow } from './follow';
 import LibraryShareDialog from './LibraryShareDialog';
 import {
   t,
@@ -194,11 +195,7 @@ export default function Library({ me, reload }: { me: Me; reload: () => Promise<
 
   // While files wait for their virus scan, the list follows.
   const scanning = files.some((f) => f.scan === 'pending');
-  useEffect(() => {
-    if (!scanning) return;
-    const timer = window.setInterval(() => void load(), 4000);
-    return () => window.clearInterval(timer);
-  }, [scanning]);
+  useFollow(scanning, () => load());
   async function load() {
     try {
       const [f, ls, c, unfinished] = await Promise.all([

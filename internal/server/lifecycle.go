@@ -8,6 +8,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -248,14 +249,26 @@ func (a *App) zipShare(w http.ResponseWriter, r *http.Request) {
 	}
 	// A ZIP holds the files that can still be downloaded and counts once for each.
 	available := []File{}
+	held := ""
 	for _, f := range s.Files {
-		if !usedUp(f) && f.Scan == "" {
+		switch {
+		case usedUp(f):
+		case f.Scan != "":
+			if held != scanInfected {
+				held = f.Scan
+			}
+		default:
 			available = append(available, f)
 		}
 	}
 	if len(available) == 0 {
 		a.mu.Unlock()
-		fail(w, 410, "download_limit_reached")
+		// Files held back by their scan say so, not that they ran out.
+		if held != "" {
+			failHeld(w, held)
+		} else {
+			fail(w, 410, "download_limit_reached")
+		}
 		return
 	}
 	full := s
@@ -322,10 +335,15 @@ func (a *App) zipShare(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, f := range s.Files {
-		// A file deleted while the ZIP streams is left out; one already
+		// A file deleted while the ZIP streams is left out, as is one
+		// replaced by contents still waiting for their scan; one already
 		// open is read to the end even if it is deleted meanwhile.
 		a.mu.Lock()
-		file, e := a.openCurrent(f.ID)
+		var file *os.File
+		e := errScanHeld
+		if a.scanHeld(f.ID) == "" {
+			file, e = a.openCurrent(f.ID)
+		}
 		a.mu.Unlock()
 		if e != nil {
 			continue

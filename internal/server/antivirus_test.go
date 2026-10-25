@@ -72,7 +72,9 @@ func fakeClamd(t *testing.T, limit int) (string, *atomic.Int64) {
 							return
 						}
 					}
-					if strings.Contains(data.String(), "EICAR-STANDARD-ANTIVIRUS-TEST-FILE") {
+					if strings.Contains(data.String(), "LIMITS-EXCEEDED") {
+						conn.Write([]byte("stream: Heuristics.Limits.Exceeded.MaxFileSize FOUND\x00"))
+					} else if strings.Contains(data.String(), "EICAR-STANDARD-ANTIVIRUS-TEST-FILE") {
 						conn.Write([]byte("stream: Eicar-Test-Signature FOUND\x00"))
 					} else {
 						conn.Write([]byte("stream: OK\x00"))
@@ -115,7 +117,7 @@ func TestScanningHoldsFilesUntilCleanAndBlocksInfected(t *testing.T) {
 	if len(view.Files) != 2 || view.Files[0].Scan != "pending" || view.Files[1].Scan != "pending" {
 		t.Fatal("waiting files not marked", view.Files)
 	}
-	if w := call(a, "GET", "/api/public/"+id+"/zip", "", ""); w.Code == 200 {
+	if w := call(a, "GET", "/api/public/"+id+"/zip", "", ""); w.Code != 423 {
 		t.Fatal("a ZIP was made of files waiting for their scan", w.Code)
 	}
 
@@ -260,13 +262,11 @@ func TestScanFollowsVersionsAndBlocksExtracting(t *testing.T) {
 	scanAllNow(a)
 	folderCall(t, a, admin, "POST", "/api/library/files/"+f.ID+"/extract", `{}`, 403)
 
-	// Replaced by a clean version: that one is scanned and usable; the
+	// Replaced by a clean version, which brings its scan: usable; the
 	// infected first version stays blocked in the history.
 	if w := replaceUpload(t, a, admin, f.ID, "clean.zip", zipOf(t, map[string]string{"ok.txt": "ok"})); w.Code != 200 {
 		t.Fatal(w.Code, w.Body)
 	}
-	folderCall(t, a, admin, "POST", "/api/library/files/"+f.ID+"/extract", `{}`, 423)
-	scanAllNow(a)
 	folderCall(t, a, admin, "POST", "/api/library/files/"+f.ID+"/extract", `{}`, 201)
 	if w := call(a, "GET", "/api/library/files/"+f.ID+"/history/1", "", admin); w.Code != 403 {
 		t.Fatal("an infected earlier version was sent", w.Code)
@@ -276,10 +276,12 @@ func TestScanFollowsVersionsAndBlocksExtracting(t *testing.T) {
 	}
 }
 
-// replaceUpload uploads data and makes it the new version of file.
+// replaceUpload uploads data and, once it is scanned, makes it the new
+// version of file.
 func replaceUpload(t *testing.T, a *App, token, file, name, data string) *httptest.ResponseRecorder {
 	t.Helper()
 	source := libraryUpload(t, a, token, "", name, data).Files[0].ID
+	scanAllNow(a)
 	return call(a, "POST", "/api/library/files/"+file+"/replace", `{"source":"`+source+`"}`, token)
 }
 
@@ -334,7 +336,7 @@ func TestInstallingClamAVAsksTheUpdater(t *testing.T) {
 	updaterScript = func() string { return script }
 	defer func() { updaterScript = original }()
 	a.updates.Mode, a.updates.Updater = "native", true
-	if memoryMB() > 0 && memoryMB() < 1900 {
+	if memoryMB() > 0 && memoryMB() < clamavMemory {
 		t.Skip("too little memory here for the install to be allowed")
 	}
 	if w := call(a, "POST", "/api/admin/antivirus/install", "{}", admin); w.Code != 202 {

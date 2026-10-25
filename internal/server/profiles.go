@@ -43,11 +43,8 @@ func avatarImage(data []byte) ([]byte, bool) {
 	if len(data) == 0 || len(data) > maxAvatarBytes {
 		return nil, false
 	}
-	if _, ok := rasterPreviewType(data); !ok {
-		return nil, false
-	}
-	source, _, e := image.Decode(bytes.NewReader(data))
-	if e != nil {
+	source, ok := decodeRaster(data)
+	if !ok {
 		return nil, false
 	}
 	bounds := source.Bounds()
@@ -105,7 +102,12 @@ func (a *App) profileRoutes(m *http.ServeMux) {
 			fail(w, 400, "invalid_avatar")
 			return
 		}
+		release, ok := a.decodeSlot(r.Context())
+		if !ok {
+			return
+		}
 		picture, ok := avatarImage(data)
+		release()
 		if !ok {
 			fail(w, 400, "invalid_avatar")
 			return

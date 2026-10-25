@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // A ZIP or tar file in the library can be unpacked into a new folder next to
@@ -81,6 +82,13 @@ func zipItems(reader *zip.Reader) []archiveItem {
 const (
 	tarSlack      = 64 << 20
 	tarEntryLimit = 10 * folderFileLimit
+	// Longer names are skipped without being kept, and all kept names
+	// together stay under tarNameBytes.
+	tarNameLimit = 4096
+	tarNameBytes = 16 << 20
+	// Unpacking goes on when the request ends (a proxy's timeout, say), up
+	// to this long.
+	extractTimeout = 30 * time.Minute
 )
 
 var errArchiveTooLarge = errors.New("the archive unpacks to more than fits")
@@ -131,6 +139,7 @@ func tarItems(ctx context.Context, archive io.ReaderAt, size int64, format strin
 		return nil, e
 	}
 	var items []archiveItem
+	var names int
 	for {
 		h, e := reader.Next()
 		if e == io.EOF {
@@ -142,7 +151,18 @@ func tarItems(ctx context.Context, archive io.ReaderAt, size int64, format strin
 		if len(items) >= tarEntryLimit {
 			return nil, errTooManyInArchive
 		}
-		items = append(items, archiveItem{name: h.Name, size: h.Size, dir: h.Typeflag == tar.TypeDir, usable: h.Typeflag == tar.TypeReg && h.Size >= 0})
+		// A name from a long-name header points into that whole header, so
+		// the names kept are copies.
+		item := archiveItem{size: h.Size, dir: h.Typeflag == tar.TypeDir, usable: h.Typeflag == tar.TypeReg && h.Size >= 0}
+		if len(h.Name) <= tarNameLimit && utf8.ValidString(h.Name) {
+			item.name = strings.Clone(h.Name)
+		} else {
+			item.usable = false
+		}
+		if names += len(item.name); names > tarNameBytes {
+			return nil, errTooManyInArchive
+		}
+		items = append(items, item)
 	}
 }
 
@@ -152,7 +172,14 @@ var errTooManyInArchive = errors.New("too many entries in the archive")
 // system files, encrypted entries, links and names that would escape the
 // folder are left out.
 func archivePlan(items []archiveItem) (entries []zipEntry, dirs []string, skipped int) {
-	seen := map[string]bool{}
+	type candidate struct {
+		zipEntry
+		clean string
+	}
+	var candidates []candidate
+	// A name that appears twice keeps its first entry in a zip file and its
+	// last in a tar file, where "tar -u" adds newer copies at the end.
+	keep := map[string]int{}
 	for index, item := range items {
 		name := strings.ReplaceAll(item.name, "\\", "/")
 		// Tar files made from a folder ("tar -cf x.tar .") start every name with "./".
@@ -161,23 +188,32 @@ func archivePlan(items []archiveItem) (entries []zipEntry, dirs []string, skippe
 				name = name[2:]
 			}
 		}
-		if item.dir || strings.HasSuffix(name, "/") || name == "" || name == "." {
+		if item.dir || strings.HasSuffix(name, "/") || name == "." || (name == "" && item.usable) {
 			continue
 		}
 		clean := path.Clean("/" + name)[1:]
 		parts := strings.Split(clean, "/")
 		base := parts[len(parts)-1]
-		ok := clean == name && item.usable && !skippedInZip[base] && !strings.HasPrefix(base, "._") && parts[0] != "__MACOSX" && validFilename(base)
+		ok := name != "" && clean == name && item.usable && !skippedInZip[base] && !strings.HasPrefix(base, "._") && parts[0] != "__MACOSX" && validFilename(base)
 		for _, p := range parts[:len(parts)-1] {
 			ok = ok && validFolder(p)
 		}
-		if !ok || seen[clean] {
+		if !ok {
 			skipped++
 			continue
 		}
-		seen[clean] = true
-		dir := strings.Join(parts[:len(parts)-1], "/")
-		entries = append(entries, zipEntry{item: item, index: index, dir: dir, name: base})
+		if _, seen := keep[clean]; !seen || item.zip == nil {
+			keep[clean] = index
+		}
+		candidates = append(candidates, candidate{zipEntry{item: item, index: index, dir: strings.Join(parts[:len(parts)-1], "/"), name: base}, clean})
+	}
+	for _, c := range candidates {
+		if keep[c.clean] != c.index {
+			skipped++
+			continue
+		}
+		dir := c.dir
+		entries = append(entries, c.zipEntry)
 		for d := dir; d != ""; d = path.Dir(d) {
 			if !containsString(dirs, d) {
 				dirs = append(dirs, d)
@@ -196,6 +232,8 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 			return
 		}
 		defer func() { <-a.uploads }()
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), extractTimeout)
+		defer cancel()
 		a.mu.Lock()
 		u, f, ok := a.versionedFile(w, r, false)
 		if ok && !a.allowed(w, u.ID, "upload", "folders") {
@@ -249,7 +287,7 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 			if ok {
 				a.mu.Unlock()
 				var e error
-				items, e = tarItems(r.Context(), archive, size, format, limit)
+				items, e = tarItems(ctx, archive, size, format, limit)
 				a.mu.Lock()
 				switch {
 				case errors.Is(e, errTooManyInArchive):
@@ -258,6 +296,9 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 				case errors.Is(e, errArchiveTooLarge):
 					ok = false
 					fail(w, 413, "Din lagringskvot räcker inte")
+				case errors.Is(e, context.DeadlineExceeded):
+					ok = false
+					fail(w, 503, "archive_timeout")
 				case e != nil:
 					ok = false
 					fail(w, 400, "zip_invalid")
@@ -269,6 +310,9 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 				} else if ok && f.Size != size {
 					ok = false
 					fail(w, 409, "archive_changed")
+				} else if held := a.scanHeld(f.ID); ok && held != "" {
+					ok = false
+					failHeld(w, held)
 				}
 			}
 		}
@@ -285,7 +329,7 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 		if !ok {
 			return
 		}
-		e := plan.write(r.Context())
+		e := plan.write(ctx)
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		delete(a.extracting, plan.share)
@@ -297,10 +341,16 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 			for _, folder := range plan.folders {
 				_ = exec(a, "DELETE FROM folders WHERE id=? AND NOT EXISTS(SELECT 1 FROM library_files WHERE folder_id=?)", folder, folder)
 			}
-			fail(w, 400, "zip_invalid")
+			if errors.Is(e, context.DeadlineExceeded) {
+				fail(w, 503, "archive_timeout")
+			} else {
+				fail(w, 400, "zip_invalid")
+			}
 			return
 		}
-		a.queueScans(plan.share, false)
+		// What comes out of an archive is scanned whenever scanning is on:
+		// an archive too large to scan whole may hold anything.
+		a.queueScans(plan.share, true)
 		a.queueThumbnails(plan.share)
 		respond(w, 201, map[string]any{"folder_id": plan.top, "name": plan.topName, "files": len(plan.entries), "skipped": plan.skipped})
 	})

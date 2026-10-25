@@ -127,6 +127,21 @@ func (a *App) libraryFile(user, id string) (LibraryFile, error) {
 	e := a.db.QueryRow(`SELECT f.id,f.name,f.size,f.offset,f.backend,COALESCE(l.folder_id,''),s.id FROM files f JOIN shares s ON s.id=f.share_id LEFT JOIN library_files l ON l.file_id=f.id WHERE f.id=? AND s.owner=? AND NOT EXISTS(SELECT 1 FROM deleting d WHERE d.share_id=s.id) AND NOT EXISTS(SELECT 1 FROM file_deleting fd WHERE fd.file_id=f.id)`, id, user).Scan(&f.ID, &f.Name, &f.Size, &f.Offset, &f.Backend, &f.FolderID, &f.ShareID)
 	return f, e
 }
+
+// libraryReadable is libraryFile for serving a file's bytes: a file whose
+// upload was not finished (an upload request not completed yet, say) is not
+// served, as its scan has not been queued.
+func (a *App) libraryReadable(user, id string) (LibraryFile, error) {
+	f, e := a.libraryFile(user, id)
+	if e != nil {
+		return f, e
+	}
+	var published bool
+	if e = a.db.QueryRow("SELECT published FROM shares WHERE id=?", f.ShareID).Scan(&published); e == nil && !published {
+		e = sql.ErrNoRows
+	}
+	return f, e
+}
 func (a *App) folderRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/library/uploads", a.createShare)
 	m.HandleFunc("GET /api/folders", func(w http.ResponseWriter, r *http.Request) {
@@ -383,7 +398,7 @@ func (a *App) folderRoutes(m *http.ServeMux) {
 			if !ok {
 				return Share{}, false
 			}
-			f, e := a.libraryFile(u.ID, r.PathValue("file"))
+			f, e := a.libraryReadable(u.ID, r.PathValue("file"))
 			if e != nil {
 				fail(w, 404, "file_not_found")
 				return Share{}, false

@@ -122,21 +122,32 @@ func (a *App) installID() string {
 
 var validInstallID = regexp.MustCompile(`^[0-9a-f]{8}$`).MatchString
 
+// ownBackup reports whether a backup's installation ID (empty for archives
+// from before installation IDs) is this installation's.
+func (a *App) ownBackup(install string) bool {
+	return install == "" || install == a.install || containsString(a.formerInstalls, install)
+}
+
 // loadInstallID settles the installation's ID. The database holds it, so a
 // database restored on a new machine brings the old installation's ID and
 // with it its backups. A copy in a file in the data folder keeps the ID when
-// the restored database is from before installation IDs and has none.
+// the restored database is from before installation IDs and has none. The
+// file also keeps the IDs this machine had before, whose backups stay its own.
 func (a *App) loadInstallID() error {
 	path := filepath.Join(a.root, "install-id")
 	var saved, id string
+	var former []string
 	if data, e := os.ReadFile(path); e == nil {
-		saved = strings.TrimSpace(string(data))
+		if fields := strings.Fields(string(data)); len(fields) > 0 {
+			saved, former = fields[0], fields[1:]
+		}
 	}
 	_ = a.db.QueryRow("SELECT install_id FROM settings WHERE id=1").Scan(&id)
 	switch {
 	case validInstallID(id):
 		if validInstallID(saved) && saved != id {
-			log.Printf("backups: the database is from installation %s; its backups are this installation's now", id)
+			log.Printf("backups: the database is from installation %s; its backups are this installation's now, as are those of %s", id, saved)
+			former = append([]string{saved}, former...)
 		}
 	case validInstallID(saved):
 		id = saved
@@ -147,12 +158,19 @@ func (a *App) loadInstallID() error {
 		return e
 	}
 	a.install = id
-	if saved == id {
+	a.formerInstalls = nil
+	for _, f := range former {
+		if validInstallID(f) && f != id && !containsString(a.formerInstalls, f) && len(a.formerInstalls) < 8 {
+			a.formerInstalls = append(a.formerInstalls, f)
+		}
+	}
+	content := strings.Join(append([]string{id}, a.formerInstalls...), "\n") + "\n"
+	if data, e := os.ReadFile(path); e == nil && string(data) == content {
 		return nil
 	}
 	temp := path + ".new"
 	_ = os.Remove(temp)
-	if e := os.WriteFile(temp, []byte(id+"\n"), 0600); e != nil {
+	if e := os.WriteFile(temp, []byte(content), 0600); e != nil {
 		return e
 	}
 	if e := os.Rename(temp, path); e != nil {
@@ -165,7 +183,7 @@ func (a *App) loadInstallID() error {
 // listBackups returns this installation's backups in the folder, newest
 // first; archives from before installation IDs count as its own, so they
 // are listed, kept and pruned like the rest.
-func listBackups(dir, install string) []BackupFile {
+func listBackups(dir string, own func(string) bool) []BackupFile {
 	entries, _ := os.ReadDir(dir)
 	list := []BackupFile{}
 	for _, entry := range entries {
@@ -174,7 +192,7 @@ func listBackups(dir, install string) []BackupFile {
 			continue
 		}
 		m := backupName.FindStringSubmatch(entry.Name())
-		if m == nil || m[1] != "" && m[1] != install {
+		if m == nil || !own(m[1]) {
 			continue
 		}
 		list = append(list, BackupFile{Name: entry.Name(), Size: info.Size(), Created: info.ModTime().Unix(), Complete: m[3] == "", stamp: m[2]})
@@ -185,9 +203,9 @@ func listBackups(dir, install string) []BackupFile {
 
 // pruneBackups keeps the newest keep of this installation's archives, and
 // always the newest complete one.
-func pruneBackups(dir, install string, keep int) {
+func pruneBackups(dir string, own func(string) bool, keep int) {
 	keptComplete := false
-	for i, b := range listBackups(dir, install) {
+	for i, b := range listBackups(dir, own) {
 		if i < max(1, keep) || b.Complete && !keptComplete {
 			keptComplete = keptComplete || b.Complete
 			continue
@@ -197,13 +215,17 @@ func pruneBackups(dir, install string, keep int) {
 }
 
 // cleanBackupLeftovers removes what an interrupted backup of this
-// installation left in the folder.
+// installation left in the folder. Only what has not changed for an hour is
+// removed: a copy of this database on another machine has the same ID, and
+// its backup may be running.
 func cleanBackupLeftovers(dir, install string) {
 	entries, _ := os.ReadDir(dir)
 	for _, entry := range entries {
 		name := entry.Name()
 		if strings.HasPrefix(name, ".magisend-snapshot-"+install+"-") || strings.HasPrefix(name, "."+backupPrefix+install+"-") && strings.HasSuffix(name, ".partial") {
-			_ = os.Remove(filepath.Join(dir, name))
+			if info, e := entry.Info(); e == nil && time.Since(info.ModTime()) > time.Hour {
+				_ = os.Remove(filepath.Join(dir, name))
+			}
 		}
 	}
 }
@@ -311,6 +333,10 @@ Administration → Storage, where they can be put back into the library.
 Restoring only the database does not bring back files deleted or replaced after
 this backup; MagiSend still starts and lists missing files under
 Administration → Storage.
+
+The database carries this installation's ID, which names its backups. A copy of it
+running on a second machine (to test a restore, say) has the same ID: do not let
+both make backups into the same folder, or each prunes the other's.
 `
 
 // errBackupAbandoned stops a run that was given up or is cut off by shutdown.
@@ -500,7 +526,7 @@ func (a *App) makeBackup(now time.Time, run int) ([]string, error) {
 		return nil, errors.New("the backup file cannot be written")
 	}
 	done = true
-	pruneBackups(dir, install, s.Keep)
+	pruneBackups(dir, a.ownBackup, s.Keep)
 	return missing, nil
 }
 
@@ -711,7 +737,7 @@ func (a *App) backupRoutes(m *http.ServeMux) {
 		if internal(w, e) {
 			return
 		}
-		respond(w, 200, map[string]any{"settings": s, "folder": a.backupDir(s), "last": last, "error": failure, "warning": warning, "state": state, "sizes": sizes, "backups": listBackups(a.backupDir(s), a.installID())})
+		respond(w, 200, map[string]any{"settings": s, "folder": a.backupDir(s), "last": last, "error": failure, "warning": warning, "state": state, "sizes": sizes, "backups": listBackups(a.backupDir(s), a.ownBackup)})
 	})
 	m.HandleFunc("PUT /api/admin/backups", func(w http.ResponseWriter, r *http.Request) {
 		var b BackupSettings
@@ -756,7 +782,7 @@ func (a *App) backupRoutes(m *http.ServeMux) {
 		if internal(w, e) {
 			return
 		}
-		if m := backupName.FindStringSubmatch(name); m == nil || m[1] != "" && m[1] != a.installID() {
+		if m := backupName.FindStringSubmatch(name); m == nil || !a.ownBackup(m[1]) {
 			fail(w, 404, "not_found")
 			return
 		}
@@ -784,7 +810,7 @@ func (a *App) backupRoutes(m *http.ServeMux) {
 		if internal(w, e) {
 			return
 		}
-		if m := backupName.FindStringSubmatch(name); m == nil || m[1] != "" && m[1] != a.installID() {
+		if m := backupName.FindStringSubmatch(name); m == nil || !a.ownBackup(m[1]) {
 			fail(w, 404, "not_found")
 			return
 		}

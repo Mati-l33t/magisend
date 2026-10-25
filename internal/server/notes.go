@@ -240,6 +240,7 @@ func (a *App) noteRoutes(m *http.ServeMux) {
 			return
 		}
 		committed = true
+		a.queueFileScan(n.ID, false)
 		respond(w, 201, n)
 	})
 	// Saves a note's text and title together; the text is versioned like any

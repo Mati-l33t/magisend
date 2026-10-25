@@ -24,6 +24,7 @@ import FileThumb from './FileThumb';
 import TextEditor from './TextEditor';
 import PublicNote from './PublicNote';
 import { Modal } from './Modal';
+import { useFollow } from './follow';
 import {
   t,
   getLanguage,
@@ -147,12 +148,9 @@ export default function PublicShare({ id }: { id: string }) {
     await load();
   }
   // While files wait for their virus scan, the page follows.
+  // Only the share is fetched again, so nothing open on the page is reset.
   const scanning = !!share?.files.some((f) => f.scan === 'pending');
-  useEffect(() => {
-    if (!scanning) return;
-    const timer = window.setInterval(() => void load(), 4000);
-    return () => window.clearInterval(timer);
-  }, [scanning]);
+  useFollow(scanning, async () => setShare(await api<Share>('/api/public/' + id)));
   async function unlock(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);

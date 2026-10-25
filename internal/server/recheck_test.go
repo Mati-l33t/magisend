@@ -160,10 +160,10 @@ func TestRestoredDatabaseBringsItsInstallID(t *testing.T) {
 	if b.installID() != "aaaaaaaa" {
 		t.Fatal("the restored database's ID was not taken", b.installID())
 	}
-	if saved, _ := os.ReadFile(filepath.Join(root, "install-id")); strings.TrimSpace(string(saved)) != "aaaaaaaa" {
+	if saved, _ := os.ReadFile(filepath.Join(root, "install-id")); strings.Fields(string(saved))[0] != "aaaaaaaa" {
 		t.Fatal("the ID file was not updated", string(saved))
 	}
-	if list := listBackups(dir, b.installID()); len(list) != 1 || list[0].Name != old {
+	if list := listBackups(dir, b.ownBackup); len(list) != 1 || list[0].Name != old {
 		t.Fatal("the old installation's backups are not listed", list)
 	}
 }

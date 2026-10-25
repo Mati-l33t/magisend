@@ -43,6 +43,8 @@ type App struct {
 	thumbInline chan struct{}
 	unlockGates [unlockGateCount]chan struct{}
 	install     string
+	// Installation IDs this machine had before; their backups are its own.
+	formerInstalls []string
 	// One picture conversion for a preview at a time, and two full decodes.
 	previewConvert, previewDecode chan struct{}
 	// Wakes the virus scanner; the scanner's last error, for the admin page.

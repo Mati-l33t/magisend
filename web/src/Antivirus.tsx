@@ -3,6 +3,7 @@ import { Download, LoaderCircle, PlugZap, Save, ShieldAlert, ShieldCheck } from 
 import { api } from './api';
 import { Select } from './Select';
 import { SettingRow } from './SettingRow';
+import { useFollow } from './follow';
 import { formatDate, formatNumber, message, t, useLanguage, useMessage } from './i18n';
 
 interface ScanSettings {
@@ -32,12 +33,27 @@ interface ScanState {
     can_install: boolean;
     memory?: number;
     requested?: boolean;
-    progress?: { state: 'running' | 'success' | 'failed'; message: string };
+    progress?: { state: 'running' | 'success' | 'failed'; step?: string; message: string };
   };
 }
 
-// ClamAV needs about this much memory on the machine (MB).
-const clamavMemory = 1900;
+// ClamAV is installed with this much memory on the machine (MB).
+const clamavMemory = 2400;
+
+// The updater's steps, shown in the page's language.
+const installSteps: Record<string, string> = {
+  packages: 'antivirus.stepPackages',
+  database: 'antivirus.stepDatabase',
+  starting: 'antivirus.stepStarting',
+  stopped: 'antivirus.stepStopped',
+  apt: 'antivirus.stepApt',
+  memory: 'antivirus.stepMemory',
+  start: 'antivirus.stepStart',
+};
+function stepText(progress: { step?: string; message: string }) {
+  const key = progress.step ? installSteps[progress.step] : undefined;
+  return key ? t(key) : progress.message;
+}
 
 const megabyte = 1024 * 1024;
 
@@ -64,22 +80,14 @@ export function AntivirusPanel() {
   useEffect(() => {
     load().catch((e) => setError(e as Error));
   }, []);
-  // While files wait for their scan, the counts follow.
-  useEffect(() => {
-    if (!state?.counts.pending || state.settings.mode === 'off') return;
-    const timer = window.setInterval(() => void load().catch(() => {}), 3000);
-    return () => window.clearInterval(timer);
-  }, [state?.counts.pending, state?.settings.mode]);
-  // While ClamAV is being installed, its progress follows.
+  // While files wait for their scan, or ClamAV is being installed, the page
+  // follows.
+  const waiting = !!state?.counts.pending && state.settings.mode !== 'off';
   const installing =
     !!state?.clamav &&
     !state.clamav.running &&
     (!!state.clamav.requested || state.clamav.progress?.state === 'running');
-  useEffect(() => {
-    if (!installing) return;
-    const timer = window.setInterval(() => void load().catch(() => {}), 3000);
-    return () => window.clearInterval(timer);
-  }, [installing]);
+  useFollow(waiting || installing, load);
   async function run(fn: () => Promise<unknown>, done?: Parameters<typeof message>[0]) {
     setBusy(true);
     setError('');
@@ -141,7 +149,7 @@ export function AntivirusPanel() {
             ]}
           />
         </SettingRow>
-        <details className="antivirus-advanced" open={!!form.address}>
+        <details className="antivirus-advanced" open={!!state.settings.address}>
           <summary>{t('antivirus.advanced')}</summary>
           <SettingRow
             id="antivirus-address"
@@ -276,7 +284,7 @@ function ClamavStatus({
       <p role="status" className="notice antivirus-state">
         <LoaderCircle className="spin" size={16} />{' '}
         {t('antivirus.installing', {
-          step: progress?.state === 'running' ? progress.message : '…',
+          step: progress?.state === 'running' ? stepText(progress) : '…',
         })}
       </p>
     );
@@ -287,7 +295,7 @@ function ClamavStatus({
         <ShieldAlert size={16} /> {t('antivirus.missing')}
       </p>
       {progress?.state === 'failed' && (
-        <p className="error">{t('antivirus.installFailed', { reason: progress.message })}</p>
+        <p className="error">{t('antivirus.installFailed', { reason: stepText(progress) })}</p>
       )}
       {clamav.install === 'docker' ? (
         <p>{t('antivirus.docker')}</p>

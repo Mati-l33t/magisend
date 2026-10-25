@@ -6,8 +6,9 @@
 # Update, or run by hand: sudo /opt/magisend/update.sh
 #
 # With --clamav, or when the admin page asked for it (the file
-# .clamav-requested in the data folder), it installs ClamAV for virus
-# scanning from the system's own packages instead, and nothing else.
+# .clamav-requested in the data folder, honoured once while ClamAV is not
+# installed), it installs ClamAV for virus scanning from the system's own
+# packages instead, and nothing else.
 #
 # Only a newer release whose SHA256SUMS carries a valid release signature is
 # installed; the installed program checks the signature. Before switching
@@ -150,51 +151,73 @@ for dir in "$(dirname "$STATE")" "$(dirname "$(dirname "$STATE")")" /; do
 done
 
 # ClamAV runs as its own service; MagiSend talks to it over its socket.
-clamav_status() { # state message
+clamav_status() { # state step message; the step names the message for the admin page
   local tmp
   tmp=$(mktemp "$STATE/.clamav.XXXXXX")
-  printf '{"state":"%s","message":"%s","time":"%s"}\n' "$1" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+  printf '{"state":"%s","step":"%s","message":"%s","time":"%s"}\n' "$1" "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
   chmod 0644 "$tmp"
   mv -f "$tmp" "$STATE/clamav-status.json"
-  echo "==> $1: $2"
+  echo "==> $1: $3"
+}
+clamd_set() { # key value: sets one clamd.conf setting
+  local conf=/etc/clamav/clamd.conf
+  if grep -q "^$1 " "$conf"; then
+    sed -i "s/^$1 .*/$1 $2/" "$conf"
+  else
+    echo "$1 $2" >> "$conf"
+  fi
 }
 install_clamav() {
-  local memory conf
-  rm -f "$DATA/.clamav-requested"
-  trap 'clamav_status failed "The ClamAV installation stopped"; exit 1' ERR TERM INT HUP
-  command -v apt-get > /dev/null || { clamav_status failed "ClamAV can only be installed here with apt"; exit 1; }
+  local memory
+  trap 'clamav_status failed stopped "The ClamAV installation stopped"; exit 1' ERR TERM INT HUP
+  command -v apt-get > /dev/null || { clamav_status failed apt "ClamAV can only be installed here with apt"; exit 1; }
   memory=$(awk '/^MemTotal/ {print int($2 / 1024)}' /proc/meminfo)
-  [ "$memory" -ge 1900 ] || { clamav_status failed "ClamAV needs about 1.5 GB of memory and this system has $memory MB"; exit 1; }
-  clamav_status running "Installing ClamAV"
+  [ "$memory" -ge 2400 ] || { clamav_status failed memory "ClamAV needs at least 2.5 GB of memory and this system has $memory MB"; exit 1; }
+  clamav_status running packages "Installing ClamAV"
   { DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav-daemon clamav-freshclam > /dev/null; } ||
-    { clamav_status failed "The ClamAV packages could not be installed"; exit 1; }
-  # Files up to 100 MB are scanned, matching MagiSend's default.
-  conf=/etc/clamav/clamd.conf
-  if grep -q '^StreamMaxLength' "$conf"; then
-    sed -i 's/^StreamMaxLength.*/StreamMaxLength 100M/' "$conf"
-  else
-    echo 'StreamMaxLength 100M' >> "$conf"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav-daemon clamav-freshclam > /dev/null; } < /dev/null ||
+    { clamav_status failed packages "The ClamAV packages could not be installed"; exit 1; }
+  # Files up to 100 MB are scanned whole, matching MagiSend's default (Debian
+  # stops at 25 MB). A file ClamAV cannot scan whole is reported as such, so
+  # MagiSend marks it unscanned instead of clean.
+  clamd_set StreamMaxLength 100M
+  clamd_set MaxFileSize 100M
+  clamd_set MaxScanSize 400M
+  clamd_set AlertExceedsMax true
+  # A new virus database is loaded next to the old one unless memory is
+  # short; then scans wait while it loads.
+  if [ "$memory" -lt 4000 ]; then
+    clamd_set ConcurrentDatabaseReload false
   fi
   systemctl enable --now clamav-freshclam > /dev/null 2>&1 || true
-  clamav_status running "Downloading the virus database"
+  clamav_status running database "Downloading the virus database"
   for _ in $(seq 1 120); do
     compgen -G '/var/lib/clamav/main.c[lv]d' > /dev/null && break
     sleep 5
   done
-  compgen -G '/var/lib/clamav/main.c[lv]d' > /dev/null || { clamav_status failed "The virus database could not be downloaded"; exit 1; }
-  clamav_status running "Starting ClamAV"
+  compgen -G '/var/lib/clamav/main.c[lv]d' > /dev/null || { clamav_status failed database "The virus database could not be downloaded"; exit 1; }
+  clamav_status running starting "Starting ClamAV"
   systemctl enable clamav-daemon > /dev/null 2>&1 || true
   systemctl restart clamav-daemon > /dev/null 2>&1 || true
   for _ in $(seq 1 90); do
     [ -S /run/clamav/clamd.ctl ] && break
     sleep 2
   done
-  [ -S /run/clamav/clamd.ctl ] || { clamav_status failed "ClamAV did not start; see: journalctl -u clamav-daemon"; exit 1; }
-  clamav_status success "ClamAV is installed and running"
+  [ -S /run/clamav/clamd.ctl ] || { clamav_status failed start "ClamAV did not start; see: journalctl -u clamav-daemon"; exit 1; }
+  clamav_status success done "ClamAV is installed and running"
   exit 0
 }
-if [ "${1:-}" = --clamav ] || [ -e "$DATA/.clamav-requested" ]; then
+# The admin page's request counts once, while it is recent and ClamAV is not
+# installed yet; otherwise it is dropped and the update goes on.
+REQUEST="$DATA/.clamav-requested"
+CLAMAV=0
+[ "${1:-}" = --clamav ] && CLAMAV=1
+if [ -f "$REQUEST" ] && [ ! -L "$REQUEST" ] && [ -n "$(find "$REQUEST" -maxdepth 0 -mmin -20 2> /dev/null)" ] &&
+  ! dpkg-query -W -f='${Status}' clamav-daemon 2> /dev/null | grep -q 'install ok installed'; then
+  CLAMAV=1
+fi
+rm -f -- "$REQUEST" 2> /dev/null || true
+if [ "$CLAMAV" = 1 ]; then
   install_clamav
 fi
 

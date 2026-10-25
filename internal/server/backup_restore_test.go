@@ -225,7 +225,7 @@ func TestBackupsKeepTheLastCompleteOne(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	folderCall(t, a, token, "POST", "/api/admin/backups", `{}`, 202)
 	waitForBackup(t, a)
-	list := listBackups(dir, a.installID())
+	list := listBackups(dir, a.ownBackup)
 	if len(list) != 2 || list[0].Complete || !list[1].Complete {
 		t.Fatal("the last complete backup was not kept", list)
 	}

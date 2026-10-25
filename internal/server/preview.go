@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"image"
 	"image/gif"
@@ -146,15 +147,39 @@ func (a *App) previewWith(w http.ResponseWriter, r *http.Request, authorize func
 
 // decodePreview checks a picture by decoding it fully, which takes up to
 // about 100 MB; only a few run at once, and a visitor waits for a turn
-// while the request lasts.
+// while the request lasts. Anything that is not a picture does not wait.
 func (a *App) decodePreview(r *http.Request, data []byte) (string, bool) {
-	select {
-	case a.previewDecode <- struct{}{}:
-	case <-r.Context().Done():
+	if !rasterSignature(data) {
 		return "", false
 	}
-	defer func() { <-a.previewDecode }()
+	release, ok := a.decodeSlot(r.Context())
+	if !ok {
+		return "", false
+	}
+	defer release()
 	return rasterPreviewType(data)
+}
+
+// decodeSlot waits for one of the few picture decodings that may run at
+// once: previews, thumbnails and profile pictures share them.
+func (a *App) decodeSlot(ctx context.Context) (func(), bool) {
+	select {
+	case a.previewDecode <- struct{}{}:
+		return func() { <-a.previewDecode }, true
+	case <-ctx.Done():
+		return nil, false
+	}
+}
+
+// rasterSignature reports whether data starts like a picture
+// rasterPreviewType reads.
+func rasterSignature(data []byte) bool {
+	for _, magic := range []string{"\x89PNG\r\n\x1a\n", "\xff\xd8\xff", "GIF87a", "GIF89a", "BM"} {
+		if bytes.HasPrefix(data, []byte(magic)) {
+			return true
+		}
+	}
+	return len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP"
 }
 
 // convertPreview runs one picture conversion at a time, which can need a few
@@ -170,48 +195,65 @@ func (a *App) convertPreview(r *http.Request, convert func() ([]byte, bool)) ([]
 }
 
 func rasterPreviewType(data []byte) (string, bool) {
-	// WebP is read by its own decoder, not registered with image, so nothing
-	// else starts decoding it. Animated WebP is not supported and refused.
+	_, kind, ok := rasterPreviewImage(data)
+	return kind, ok
+}
+
+// decodeRaster is the picture rasterPreviewType checked, for thumbnails and
+// profile pictures, so it is decoded only once.
+func decodeRaster(data []byte) (image.Image, bool) {
+	picture, _, ok := rasterPreviewImage(data)
+	return picture, ok
+}
+
+func rasterPreviewImage(data []byte) (image.Image, string, bool) {
+	// WebP is checked by its own decoder first, so its frame limits apply
+	// before anything else reads it. Animated WebP is not supported and
+	// refused.
 	if len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP" {
 		config, e := webp.DecodeConfig(bytes.NewReader(data))
 		if e != nil || config.Width <= 0 || config.Height <= 0 || config.Width > previewMaxPixels/config.Height {
-			return "", false
+			return nil, "", false
 		}
-		_, e = webp.Decode(bytes.NewReader(data))
-		return "image/webp", e == nil
+		picture, e := webp.Decode(bytes.NewReader(data))
+		return picture, "image/webp", e == nil
 	}
 	// BMP likewise, by its own decoder.
 	if bytes.HasPrefix(data, []byte("BM")) {
 		config, e := bmp.DecodeConfig(bytes.NewReader(data))
 		if e != nil || config.Width <= 0 || config.Height <= 0 || config.Width > previewMaxPixels/config.Height {
-			return "", false
+			return nil, "", false
 		}
-		_, e = bmp.Decode(bytes.NewReader(data))
-		return "image/bmp", e == nil
+		picture, e := bmp.Decode(bytes.NewReader(data))
+		return picture, "image/bmp", e == nil
 	}
 	config, format, e := image.DecodeConfig(bytes.NewReader(data))
 	if e != nil || config.Width <= 0 || config.Height <= 0 || config.Width > previewMaxPixels/config.Height {
-		return "", false
+		return nil, "", false
 	}
 	// DecodeConfig alone cannot detect corrupt pixel data, truncation or CRC
 	// failures. Fully decode every accepted raster before releasing any bytes.
+	var picture image.Image
 	switch format {
 	case "png":
 		if !boundedPNG(data) {
-			return "", false
+			return nil, "", false
 		}
-		_, e = png.Decode(bytes.NewReader(data))
+		picture, e = png.Decode(bytes.NewReader(data))
 	case "jpeg":
-		_, e = jpeg.Decode(bytes.NewReader(data))
+		picture, e = jpeg.Decode(bytes.NewReader(data))
 	case "gif":
 		if !boundedGIF(data, config.Width, config.Height) {
-			return "", false
+			return nil, "", false
 		}
-		_, e = gif.DecodeAll(bytes.NewReader(data))
+		if _, e = gif.DecodeAll(bytes.NewReader(data)); e == nil {
+			// The first frame, drawn on the whole picture.
+			picture, e = gif.Decode(bytes.NewReader(data))
+		}
 	default:
-		return "", false
+		return nil, "", false
 	}
-	return "image/" + format, e == nil
+	return picture, "image/" + format, e == nil
 }
 
 // The static PNG decoder does not validate APNG frames. Walk chunk boundaries

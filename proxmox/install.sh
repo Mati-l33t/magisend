@@ -131,7 +131,7 @@ advanced() {
   fi
   value=$(ask "RAM" "Memory in MB:" "$RAM") || die "Cancelled"
   [[ $value =~ ^[0-9]+$ ]] && [ "$value" -ge 256 ] || die "Memory must be at least 256 MB"
-  [ "$CLAMAV" = 0 ] || [ "$value" -ge 2048 ] || die "With ClamAV the container needs at least 2048 MB of memory"
+  [ "$CLAMAV" = 0 ] || [ "$value" -ge 2560 ] || die "With ClamAV the container needs at least 2560 MB of memory"
   RAM=$value
   value=$(ask "NETWORK BRIDGE" "Network bridge:" "$BRIDGE") || die "Cancelled"
   [[ $value =~ ^[A-Za-z0-9._-]+$ ]] || die "Invalid bridge name"

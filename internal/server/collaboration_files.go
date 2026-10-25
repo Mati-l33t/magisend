@@ -161,7 +161,7 @@ func (a *App) collaboratorUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	committed = true
-	a.queueScans(container, true)
+	a.queueFileScan(f.ID, true)
 	a.queueThumbnails(container)
 	respond(w, 201, f)
 }

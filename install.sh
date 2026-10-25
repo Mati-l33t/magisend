@@ -8,7 +8,7 @@
 #   MAGISEND_PUBLIC_URL=https://share.example.com   public address behind a reverse proxy
 #   MAGISEND_TRUSTED_PROXIES=192.168.1.10      reverse proxy address(es)
 #   MAGISEND_VERSION=v1.0.0                    install a specific release (default: latest)
-#   MAGISEND_WITH_CLAMAV=1                     also install ClamAV for virus scanning (needs about 1.5 GB of memory)
+#   MAGISEND_WITH_CLAMAV=1                     also install ClamAV for virus scanning (needs at least 2.5 GB of memory in all)
 #
 # Running it again on an existing installation updates it to the latest release.
 set -euo pipefail
@@ -30,6 +30,7 @@ die() {
   echo -e "\033[1;31mError:\033[0m $1" >&2
   exit 1
 }
+warn() { echo -e "\033[1;31mWarning:\033[0m $1" >&2; }
 
 [ "$(id -u)" -eq 0 ] || die "run as root (for example: curl ... | sudo bash)"
 command -v systemctl > /dev/null && [ -d /run/systemd/system ] || die "systemd is required"
@@ -45,11 +46,11 @@ esac
 
 if [ -f "$APP_DIR/.magisend-release" ]; then
   step "MagiSend is already installed, updating to the latest release"
-  "$APP_DIR/update.sh" || exit
+  "$APP_DIR/update.sh" < /dev/null || exit
   if [ "${MAGISEND_WITH_CLAMAV:-}" = 1 ]; then
     grep -q -- '--clamav' "$APP_DIR/update.sh" || die "this MagiSend cannot install ClamAV yet; update it first"
     step "Installing ClamAV for virus scanning (this takes a few minutes)"
-    "$APP_DIR/update.sh" --clamav || die "ClamAV was not installed; see above"
+    "$APP_DIR/update.sh" --clamav < /dev/null || die "ClamAV was not installed; see above"
     done_ "ClamAV installed; switch scanning on under Administration → Virus scanning"
   fi
   exit 0
@@ -61,8 +62,8 @@ for tool in curl tar sha256sum flock; do command -v "$tool" > /dev/null || missi
 if [ ${#missing[@]} -gt 0 ]; then
   command -v apt-get > /dev/null || die "please install: ${missing[*]}"
   step "Installing ${missing[*]}"
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates tar coreutils util-linux > /dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq < /dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates tar coreutils util-linux > /dev/null < /dev/null
 fi
 
 if [ "$VERSION" = latest ]; then
@@ -117,8 +118,13 @@ MAGISEND_LISTEN="0.0.0.0:$PORT" "$APP_DIR/magisend" --healthcheck || die "MagiSe
 # ClamAV is installed by the updater, which the admin page can also ask to.
 if [ "${MAGISEND_WITH_CLAMAV:-}" = 1 ]; then
   step "Installing ClamAV for virus scanning (this takes a few minutes)"
-  "$APP_DIR/update.sh" --clamav || die "ClamAV was not installed; see above"
-  done_ "ClamAV installed; switch scanning on under Administration → Virus scanning"
+  # MagiSend already runs, so it is set up either way; ClamAV can be added
+  # later from the admin page.
+  if "$APP_DIR/update.sh" --clamav < /dev/null; then
+    done_ "ClamAV installed; switch scanning on under Administration → Virus scanning"
+  else
+    warn "ClamAV was not installed (see above); MagiSend works without it, and Administration → Virus scanning can install it later"
+  fi
 fi
 
 done_ "MagiSend $VERSION is running"

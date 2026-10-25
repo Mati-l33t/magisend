@@ -227,6 +227,9 @@ func icoPreview(data []byte) bool {
 	if count == 0 || count > 256 || len(data) < 6+16*count {
 		return false
 	}
+	// Entries pointing at the same picture are read once, and a PNG in an
+	// icon is no larger than an icon is.
+	checked := map[int64]bool{}
 	for i := 0; i < count; i++ {
 		entry := data[6+16*i:]
 		n, at := int64(binary.LittleEndian.Uint32(entry[8:])), int64(binary.LittleEndian.Uint32(entry[12:]))
@@ -235,6 +238,14 @@ func icoPreview(data []byte) bool {
 		}
 		picture := data[at : at+n]
 		if bytes.HasPrefix(picture, []byte("\x89PNG\r\n\x1a\n")) {
+			if checked[at] {
+				continue
+			}
+			checked[at] = true
+			config, e := png.DecodeConfig(bytes.NewReader(picture))
+			if e != nil || config.Width > 1024 || config.Height > 1024 {
+				return false
+			}
 			if kind, ok := rasterPreviewType(picture); !ok || kind != "image/png" {
 				return false
 			}

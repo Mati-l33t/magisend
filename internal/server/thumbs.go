@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"image"
@@ -158,11 +159,10 @@ func (a *App) generateThumbnail(fileID string) error {
 	}
 	// Reuse the preview preflight so animated or malformed rasters never reach
 	// the encoder, then decode exactly the bytes that preflight accepted.
-	if _, ok := rasterPreviewType(data); !ok {
-		return errNoThumbnail
-	}
-	source, _, e := image.Decode(bytes.NewReader(data))
-	if e != nil {
+	release, _ := a.decodeSlot(context.Background())
+	source, ok := decodeRaster(data)
+	release()
+	if !ok {
 		return errNoThumbnail
 	}
 	a.mu.Lock()

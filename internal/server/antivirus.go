@@ -48,6 +48,7 @@ const (
 )
 
 var errScanTooLarge = errors.New("the file is larger than the scanner accepts")
+var errScanHeld = errors.New("the file is held back by its scan")
 
 type ScanSettings struct {
 	Mode    string `json:"mode"`
@@ -73,9 +74,21 @@ func migrateAntivirus(db *sql.DB) error {
 }
 
 func (a *App) scanSettings() ScanSettings {
-	s := ScanSettings{Mode: scanOff, MaxSize: defaultScanMaxSize}
-	_ = a.db.QueryRow("SELECT scan_mode,scan_address,scan_max_size FROM settings WHERE id=1").Scan(&s.Mode, &s.Address, &s.MaxSize)
+	s, _ := a.readScanSettings()
 	return s
+}
+
+func (a *App) readScanSettings() (ScanSettings, error) {
+	s := ScanSettings{Mode: scanOff, MaxSize: defaultScanMaxSize}
+	e := a.db.QueryRow("SELECT scan_mode,scan_address,scan_max_size FROM settings WHERE id=1").Scan(&s.Mode, &s.Address, &s.MaxSize)
+	return s, e
+}
+
+// scanningOff reports whether scanning is known to be switched off; when the
+// setting cannot be read, waiting files stay held back.
+func (a *App) scanningOff() bool {
+	s, e := a.readScanSettings()
+	return e == nil && s.Mode == scanOff
 }
 
 // clamdAddress is where clamd listens: the setting, else MAGISEND_CLAMAV
@@ -108,17 +121,27 @@ func validClamdAddress(address string) bool {
 // currentBlobSQL picks a file's current stored object, as currentBlob does.
 const currentBlobSQL = `COALESCE((SELECT v.blob FROM text_versions v WHERE v.file_id=f.id ORDER BY v.number DESC LIMIT 1),f.id)`
 
-// queueScans marks the newly stored contents of a share's files for
-// scanning, when the setting covers them: received says they came from
-// someone other than the owner. Caller holds mu.
+// queueScans marks the contents of a new share's files for scanning, when
+// the setting covers them: received says they came from someone other than
+// the owner. Caller holds mu.
 func (a *App) queueScans(shareID string, received bool) {
+	a.queueScansWhere("f.share_id=?", shareID, received)
+}
+
+// queueFileScan is queueScans for one file whose contents just changed.
+// Caller holds mu.
+func (a *App) queueFileScan(fileID string, received bool) {
+	a.queueScansWhere("f.id=?", fileID, received)
+}
+
+func (a *App) queueScansWhere(where, id string, received bool) {
 	mode := a.scanSettings().Mode
 	if mode == scanOff || mode == scanReceived && !received {
 		return
 	}
-	_, e := a.db.Exec(`INSERT OR IGNORE INTO file_scans(file_id,blob,state,queued) SELECT f.id,`+currentBlobSQL+`,'pending',? FROM files f WHERE f.share_id=? AND f.offset=f.size`, time.Now().Unix(), shareID)
+	_, e := a.db.Exec(`INSERT OR IGNORE INTO file_scans(file_id,blob,state,queued) SELECT f.id,`+currentBlobSQL+`,'pending',? FROM files f WHERE `+where+` AND f.offset=f.size`, time.Now().Unix(), id)
 	if e != nil {
-		log.Printf("antivirus: files of %s could not be queued: %v", shareID, e)
+		log.Printf("antivirus: %s could not be queued: %v", id, e)
 		return
 	}
 	select {
@@ -132,7 +155,7 @@ func (a *App) queueScans(shareID string, received bool) {
 func (a *App) heldScans() map[string]string {
 	held := map[string]string{}
 	// Read first: the one database connection is busy while rows are open.
-	waiting := a.scanSettings().Mode != scanOff
+	waiting := !a.scanningOff()
 	rows, e := a.db.Query(`SELECT s.file_id,s.state FROM file_scans s JOIN files f ON f.id=s.file_id WHERE s.state IN('pending','infected') AND s.blob=` + currentBlobSQL)
 	if e != nil {
 		return held
@@ -151,10 +174,21 @@ func (a *App) heldScans() map[string]string {
 // holds mu.
 func (a *App) scanHeld(fileID string) string {
 	var state string
-	if a.db.QueryRow(`SELECT s.state FROM file_scans s JOIN files f ON f.id=s.file_id WHERE s.file_id=? AND s.state IN('pending','infected') AND s.blob=`+currentBlobSQL, fileID).Scan(&state) != nil {
+	e := a.db.QueryRow(`SELECT s.state FROM file_scans s JOIN files f ON f.id=s.file_id WHERE s.file_id=? AND s.state IN('pending','infected') AND s.blob=`+currentBlobSQL, fileID).Scan(&state)
+	return a.heldState(state, e)
+}
+
+// heldState turns a looked-up scan state into scanHeld's answer. A failed
+// lookup holds the file back.
+func (a *App) heldState(state string, e error) string {
+	if errors.Is(e, sql.ErrNoRows) {
 		return ""
 	}
-	if state == scanPending && a.scanSettings().Mode == scanOff {
+	if e != nil {
+		log.Printf("antivirus: scan state could not be read: %v", e)
+		return scanPending
+	}
+	if state == scanPending && a.scanningOff() {
 		return ""
 	}
 	return state
@@ -164,13 +198,8 @@ func (a *App) scanHeld(fileID string) string {
 // version. Caller holds mu.
 func (a *App) blobHeld(fileID, blob string) string {
 	var state string
-	if a.db.QueryRow("SELECT state FROM file_scans WHERE file_id=? AND blob=? AND state IN('pending','infected')", fileID, blob).Scan(&state) != nil {
-		return ""
-	}
-	if state == scanPending && a.scanSettings().Mode == scanOff {
-		return ""
-	}
-	return state
+	e := a.db.QueryRow("SELECT state FROM file_scans WHERE file_id=? AND blob=? AND state IN('pending','infected')", fileID, blob).Scan(&state)
+	return a.heldState(state, e)
 }
 
 // failHeld answers for a file that is held back.
@@ -258,6 +287,10 @@ func clamdScan(ctx context.Context, address string, data io.Reader, size int64) 
 	switch {
 	case re == nil && strings.Contains(reply, "size limit exceeded"):
 		return "", errScanTooLarge
+	// With AlertExceedsMax, a file clamd could not scan whole (too large, an
+	// archive too deep or with too many files) is reported like this.
+	case re == nil && strings.HasPrefix(reply, "stream: Heuristics.Limits.Exceeded"):
+		return "", errScanTooLarge
 	case re == nil && reply == "stream: OK":
 		return "", nil
 	case re == nil && strings.HasPrefix(reply, "stream: ") && strings.HasSuffix(reply, " FOUND"):
@@ -266,12 +299,25 @@ func clamdScan(ctx context.Context, address string, data io.Reader, size int64) 
 			signature = "unknown"
 		}
 		return signature, nil
+	case sent != nil && re != nil && size > scanChunk && clamdAnswers(address):
+		// Over TCP, clamd's answer to a stream past its limit can be lost
+		// when it closes the connection; it still answers, so the stream
+		// was refused, not lost.
+		return "", errScanTooLarge
 	case sent != nil:
 		return "", sent
 	case re != nil:
 		return "", re
 	}
 	return "", errors.New("clamd: " + reply)
+}
+
+// clamdAnswers checks that clamd is up, after a stream was cut off.
+func clamdAnswers(address string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, e := clamdVersion(ctx, address)
+	return e == nil
 }
 
 // scanStatus is the last thing the scanner reported, for the admin page.
@@ -317,8 +363,14 @@ func (a *App) scanNext(ctx context.Context) bool {
 		a.mu.Unlock()
 		return false
 	}
-	record := func(state, signature string) {
-		_ = exec(a, "UPDATE file_scans SET state=?,signature=?,scanned=? WHERE file_id=? AND blob=?", state, signature, time.Now().Unix(), id, blob)
+	// When the result cannot be written, the worker stops until its next
+	// round instead of scanning the same file again at once.
+	record := func(state, signature string) bool {
+		e := exec(a, "UPDATE file_scans SET state=?,signature=?,scanned=? WHERE file_id=? AND blob=?", state, signature, time.Now().Unix(), id, blob)
+		if e != nil {
+			log.Printf("antivirus: the scan of file %s could not be saved: %v", id, e)
+		}
+		return e == nil
 	}
 	var file *os.File
 	path, e := a.fileBlob(id, blob)
@@ -343,15 +395,15 @@ func (a *App) scanNext(ctx context.Context) bool {
 		}
 		// The stored object is gone (replaced, or its storage is offline):
 		// tried again later.
-		a.retryScan(id, blob, tries, e)
+		more := a.retryScan(id, blob, tries, e)
 		a.mu.Unlock()
-		return true
+		return more
 	}
 	if info.Size() > settings.MaxSize {
-		record(scanUnscanned, "too large")
+		more := record(scanUnscanned, "too large")
 		a.mu.Unlock()
 		file.Close()
-		return true
+		return more
 	}
 	a.mu.Unlock()
 	signature, e := clamdScan(ctx, clamdAddress(settings), file, info.Size())
@@ -362,13 +414,15 @@ func (a *App) scanNext(ctx context.Context) bool {
 	case ctx.Err() != nil:
 		return false
 	case errors.Is(e, errScanTooLarge):
-		record(scanUnscanned, "too large for clamd")
+		return record(scanUnscanned, "too large for clamd")
 	case e != nil:
 		a.retryScan(id, blob, tries, e)
 		a.scanState.Store(scanStatus{Error: e.Error(), At: time.Now().Unix()})
 		return false
 	case signature != "":
-		record(scanInfected, signature)
+		if !record(scanInfected, signature) {
+			return false
+		}
 		a.scanState.Store(scanStatus{})
 		log.Printf("antivirus: %s found in file %s", signature, id)
 		a.audit(nil, a.username(owner), "file.infected", name+" ("+signature+")")
@@ -376,23 +430,29 @@ func (a *App) scanNext(ctx context.Context) bool {
 			return fmt.Sprintf(t["infected"], name), signature
 		}, a.linkOrigin())
 	default:
-		record(scanClean, "")
+		if !record(scanClean, "") {
+			return false
+		}
 		a.scanState.Store(scanStatus{})
 	}
 	return true
 }
 
-// retryScan puts a scan off: after a minute, doubling up to an hour.
-// Caller holds mu.
-func (a *App) retryScan(id, blob string, tries int, cause error) {
+// retryScan puts a scan off: after a minute, doubling up to an hour. It
+// reports whether that was saved. Caller holds mu.
+func (a *App) retryScan(id, blob string, tries int, cause error) bool {
 	wait := time.Minute << min(tries, 6)
 	if wait > time.Hour {
 		wait = time.Hour
 	}
-	_ = exec(a, "UPDATE file_scans SET tries=tries+1,retry_at=? WHERE file_id=? AND blob=?", time.Now().Add(wait).Unix(), id, blob)
+	if e := exec(a, "UPDATE file_scans SET tries=tries+1,retry_at=? WHERE file_id=? AND blob=?", time.Now().Add(wait).Unix(), id, blob); e != nil {
+		log.Printf("antivirus: the retry of file %s could not be saved: %v", id, e)
+		return false
+	}
 	if tries == 0 {
 		log.Printf("antivirus: file %s could not be scanned, trying again later: %v", id, cause)
 	}
+	return true
 }
 
 // ClamAV can be installed from the admin page on a native installation: the
@@ -407,9 +467,18 @@ const (
 
 type clamavInstall struct {
 	State   string `json:"state"`
+	Step    string `json:"step,omitempty"`
 	Message string `json:"message"`
 	Time    string `json:"time"`
 }
+
+// clamavMemory is the memory (MB) ClamAV is installed with: about 1.5 GB for
+// clamd itself, and MagiSend's own share.
+const clamavMemory = 2400
+
+// clamavStale is how long an install request or a running install is waited
+// for; after that the admin page offers the button again.
+const clamavStale = 20 * time.Minute
 
 type clamavInfo struct {
 	Running bool   `json:"running"`
@@ -472,11 +541,16 @@ func (a *App) clamavInfo(ctx context.Context, s ScanSettings) clamavInfo {
 		info.CanInstall = a.updates.Updater && updaterInstallsClamAV()
 		info.Memory = memoryMB()
 	}
-	_, e := os.Stat(filepath.Join(a.root, clamavTrigger))
-	info.Requested = e == nil
+	if stat, e := os.Stat(filepath.Join(a.root, clamavTrigger)); e == nil {
+		info.Requested = time.Since(stat.ModTime()) < clamavStale
+	}
 	if data, e := os.ReadFile(clamavStatusPath); e == nil && len(data) < 4096 {
 		var progress clamavInstall
 		if json.Unmarshal(data, &progress) == nil {
+			// An install that stopped without saying so counts as failed.
+			if at, e := time.Parse(time.RFC3339, progress.Time); progress.State == "running" && (e != nil || time.Since(at) > clamavStale) {
+				progress.State, progress.Step, progress.Message = "failed", "stopped", "The ClamAV installation stopped"
+			}
 			info.Progress = &progress
 		}
 	}
@@ -566,7 +640,7 @@ func (a *App) antivirusRoutes(m *http.ServeMux) {
 			fail(w, 409, "antivirus_cannot_install")
 			return
 		}
-		if memory := memoryMB(); memory > 0 && memory < 1900 {
+		if memory := memoryMB(); memory > 0 && memory < clamavMemory {
 			fail(w, 409, "antivirus_memory")
 			return
 		}
