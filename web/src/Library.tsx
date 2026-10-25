@@ -710,7 +710,7 @@ export default function Library({ me, reload }: { me: Me; reload: () => Promise<
             },
           },
         ]),
-    ...(/\.zip$/i.test(f.name)
+    ...(/\.(zip|tar|tgz|tbz2?|tar\.gz|tar\.bz2)$/i.test(f.name)
       ? [
           {
             label: t('library.extract'),

@@ -1,7 +1,11 @@
 package server
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"compress/bzip2"
+	"compress/gzip"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -14,17 +18,47 @@ import (
 	"time"
 )
 
-// A ZIP file in the library can be unpacked into a new folder next to it,
-// keeping the folders inside it. Everything is checked against the limits
+// A ZIP or tar file in the library can be unpacked into a new folder next to
+// it, keeping the folders inside it. Everything is checked against the limits
 // first, from the archive's own list of contents; then the files are written
 // without holding the app lock, and each must come out at exactly the size
 // the archive promised, so an archive that lies about its sizes stops instead
 // of filling the disk. The new files appear only when all of them are done.
+//
+// A tar file has no list of contents: it is read through once to make one
+// (outside the app lock) and again to unpack. Only plain files and folders
+// are taken from it; links, devices and the like are left out.
 
 var skippedInZip = map[string]bool{".DS_Store": true, "Thumbs.db": true, "desktop.ini": true}
 
+// archiveFormat is how a file is unpacked, from its name: "zip", "tar",
+// "tar.gz" or "tar.bz2"; base is the name without the extension.
+func archiveFormat(name string) (format, base string) {
+	lower := strings.ToLower(name)
+	for _, k := range []struct{ suffix, format string }{
+		{".zip", "zip"}, {".tar", "tar"},
+		{".tar.gz", "tar.gz"}, {".tgz", "tar.gz"},
+		{".tar.bz2", "tar.bz2"}, {".tbz2", "tar.bz2"}, {".tbz", "tar.bz2"},
+	} {
+		if strings.HasSuffix(lower, k.suffix) && len(name) > len(k.suffix) {
+			return k.format, name[:len(name)-len(k.suffix)]
+		}
+	}
+	return "", ""
+}
+
+// archiveItem is one entry in an archive's contents.
+type archiveItem struct {
+	name   string
+	size   int64
+	dir    bool
+	usable bool      // a plain, unencrypted file
+	zip    *zip.File // ZIP only
+}
+
 type zipEntry struct {
-	file   *zip.File
+	item   archiveItem
+	index  int // position in the archive
 	dir    string
 	name   string
 	id     string
@@ -32,19 +66,108 @@ type zipEntry struct {
 	path   string
 }
 
-// zipPlan reads the archive's list of contents. Folders, system files,
-// encrypted entries and names that would escape the folder are left out.
-func zipPlan(reader *zip.Reader) (entries []zipEntry, dirs []string, skipped int) {
-	seen := map[string]bool{}
+func zipItems(reader *zip.Reader) []archiveItem {
+	items := make([]archiveItem, 0, len(reader.File))
 	for _, f := range reader.File {
-		name := strings.ReplaceAll(f.Name, "\\", "/")
-		if f.FileInfo().IsDir() || strings.HasSuffix(name, "/") {
+		dir := f.FileInfo().IsDir() || strings.HasSuffix(strings.ReplaceAll(f.Name, "\\", "/"), "/")
+		items = append(items, archiveItem{name: f.Name, size: int64(f.UncompressedSize64), dir: dir, usable: f.Flags&1 == 0 && f.UncompressedSize64 <= 1<<62, zip: f})
+	}
+	return items
+}
+
+// Tar files are read through at most this far past what fits the owner's
+// quota, and with at most this many entries, so a small file that unpacks to
+// endless headers or skipped data cannot keep the server busy.
+const (
+	tarSlack      = 64 << 20
+	tarEntryLimit = 10 * folderFileLimit
+)
+
+var errArchiveTooLarge = errors.New("the archive unpacks to more than fits")
+
+// cappedReader stops after limit bytes, or when the request ends.
+type cappedReader struct {
+	ctx   context.Context
+	r     io.Reader
+	limit int64
+}
+
+func (c *cappedReader) Read(b []byte) (int, error) {
+	if e := c.ctx.Err(); e != nil {
+		return 0, e
+	}
+	if c.limit <= 0 {
+		return 0, errArchiveTooLarge
+	}
+	if int64(len(b)) > c.limit {
+		b = b[:c.limit]
+	}
+	n, e := c.r.Read(b)
+	c.limit -= int64(n)
+	return n, e
+}
+
+// tarStream opens the tar data in the archive, read through at most limit
+// bytes once decompressed.
+func tarStream(ctx context.Context, archive io.ReaderAt, size int64, format string, limit int64) (*tar.Reader, error) {
+	var r io.Reader = io.NewSectionReader(archive, 0, size)
+	switch format {
+	case "tar.gz":
+		z, e := gzip.NewReader(r)
+		if e != nil {
+			return nil, e
+		}
+		r = z
+	case "tar.bz2":
+		r = bzip2.NewReader(r)
+	}
+	return tar.NewReader(&cappedReader{ctx: ctx, r: r, limit: limit}), nil
+}
+
+// tarItems reads a tar file's contents.
+func tarItems(ctx context.Context, archive io.ReaderAt, size int64, format string, limit int64) ([]archiveItem, error) {
+	reader, e := tarStream(ctx, archive, size, format, limit)
+	if e != nil {
+		return nil, e
+	}
+	var items []archiveItem
+	for {
+		h, e := reader.Next()
+		if e == io.EOF {
+			return items, nil
+		}
+		if e != nil {
+			return nil, e
+		}
+		if len(items) >= tarEntryLimit {
+			return nil, errTooManyInArchive
+		}
+		items = append(items, archiveItem{name: h.Name, size: h.Size, dir: h.Typeflag == tar.TypeDir, usable: h.Typeflag == tar.TypeReg && h.Size >= 0})
+	}
+}
+
+var errTooManyInArchive = errors.New("too many entries in the archive")
+
+// archivePlan picks what to unpack from an archive's contents. Folders,
+// system files, encrypted entries, links and names that would escape the
+// folder are left out.
+func archivePlan(items []archiveItem) (entries []zipEntry, dirs []string, skipped int) {
+	seen := map[string]bool{}
+	for index, item := range items {
+		name := strings.ReplaceAll(item.name, "\\", "/")
+		// Tar files made from a folder ("tar -cf x.tar .") start every name with "./".
+		if item.zip == nil {
+			for strings.HasPrefix(name, "./") {
+				name = name[2:]
+			}
+		}
+		if item.dir || strings.HasSuffix(name, "/") || name == "" || name == "." {
 			continue
 		}
 		clean := path.Clean("/" + name)[1:]
 		parts := strings.Split(clean, "/")
 		base := parts[len(parts)-1]
-		ok := clean == name && f.Flags&1 == 0 && !skippedInZip[base] && !strings.HasPrefix(base, "._") && parts[0] != "__MACOSX" && validFilename(base)
+		ok := clean == name && item.usable && !skippedInZip[base] && !strings.HasPrefix(base, "._") && parts[0] != "__MACOSX" && validFilename(base)
 		for _, p := range parts[:len(parts)-1] {
 			ok = ok && validFolder(p)
 		}
@@ -54,7 +177,7 @@ func zipPlan(reader *zip.Reader) (entries []zipEntry, dirs []string, skipped int
 		}
 		seen[clean] = true
 		dir := strings.Join(parts[:len(parts)-1], "/")
-		entries = append(entries, zipEntry{file: f, dir: dir, name: base})
+		entries = append(entries, zipEntry{item: item, index: index, dir: dir, name: base})
 		for d := dir; d != ""; d = path.Dir(d) {
 			if !containsString(dirs, d) {
 				dirs = append(dirs, d)
@@ -78,19 +201,17 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 		if ok && !a.allowed(w, u.ID, "upload", "folders") {
 			ok = false
 		}
-		var archive *os.File
-		var reader *zip.Reader
-		if ok && strings.ToLower(filepath.Ext(f.Name)) != ".zip" {
-			ok = false
-			fail(w, 400, "zip_invalid")
+		format := ""
+		if ok {
+			if format, _ = archiveFormat(f.Name); format == "" {
+				ok = false
+				fail(w, 400, "zip_invalid")
+			}
 		}
+		var archive *os.File
 		if ok {
 			var e error
-			archive, e = a.openCurrent(f.ID)
-			if e == nil {
-				reader, e = zip.NewReader(archive, f.Size)
-			}
-			if e != nil {
+			if archive, e = a.openCurrent(f.ID); e != nil {
 				ok = false
 				fail(w, 400, "zip_invalid")
 			}
@@ -98,9 +219,56 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 		if archive != nil {
 			defer archive.Close()
 		}
+		var items []archiveItem
+		var limit int64
+		if ok && format == "zip" {
+			reader, e := zip.NewReader(archive, f.Size)
+			if e != nil {
+				ok = false
+				fail(w, 400, "zip_invalid")
+			} else {
+				items = zipItems(reader)
+			}
+		} else if ok {
+			// A tar file is read through without the lock, then the file is
+			// looked up again: it may have moved or gone meanwhile.
+			var used int64
+			if internal(w, a.db.QueryRow("SELECT COALESCE(SUM(c.size),0) FROM storage_charges c JOIN files x ON x.id=c.file_id JOIN shares s ON s.id=x.share_id WHERE s.owner=?", u.ID).Scan(&used)) {
+				ok = false
+			}
+			limit = max(0, u.Quota-used) + tarSlack
+			size := f.Size
+			if ok {
+				a.mu.Unlock()
+				var e error
+				items, e = tarItems(r.Context(), archive, size, format, limit)
+				a.mu.Lock()
+				switch {
+				case errors.Is(e, errTooManyInArchive):
+					ok = false
+					fail(w, 413, "zip_too_many")
+				case errors.Is(e, errArchiveTooLarge):
+					ok = false
+					fail(w, 413, "Din lagringskvot räcker inte")
+				case e != nil:
+					ok = false
+					fail(w, 400, "zip_invalid")
+				}
+			}
+			if ok {
+				if u, f, ok = a.versionedFile(w, r, false); ok && !a.allowed(w, u.ID, "upload", "folders") {
+					ok = false
+				} else if ok && f.Size != size {
+					ok = false
+					fail(w, 409, "archive_changed")
+				}
+			}
+		}
 		var plan *extraction
 		if ok {
-			plan, ok = a.planExtraction(w, u, f, reader)
+			if plan, ok = a.planExtraction(w, u, f, items); ok {
+				plan.format, plan.archive, plan.size, plan.limit = format, archive, f.Size, limit
+			}
 		}
 		if ok {
 			a.extracting[plan.share] = true
@@ -109,7 +277,7 @@ func (a *App) extractRoutes(m *http.ServeMux) {
 		if !ok {
 			return
 		}
-		e := plan.write()
+		e := plan.write(r.Context())
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		delete(a.extracting, plan.share)
@@ -134,12 +302,16 @@ type extraction struct {
 	folders             []string
 	entries             []zipEntry
 	skipped             int
+	// Where the files are read from.
+	format      string
+	archive     io.ReaderAt
+	size, limit int64
 }
 
 // planExtraction checks every limit and records the new folders and the
 // files as unfinished uploads, which hold their space. Caller holds mu.
-func (a *App) planExtraction(w http.ResponseWriter, u User, f LibraryFile, reader *zip.Reader) (*extraction, bool) {
-	entries, dirs, skipped := zipPlan(reader)
+func (a *App) planExtraction(w http.ResponseWriter, u User, f LibraryFile, items []archiveItem) (*extraction, bool) {
+	entries, dirs, skipped := archivePlan(items)
 	if len(entries) == 0 {
 		fail(w, 400, "zip_empty")
 		return nil, false
@@ -154,8 +326,8 @@ func (a *App) planExtraction(w http.ResponseWriter, u User, f LibraryFile, reade
 	}
 	var total int64
 	for _, entry := range entries {
-		size := int64(entry.file.UncompressedSize64)
-		if entry.file.UncompressedSize64 > uint64(p.MaxFile) {
+		size := entry.item.size
+		if size > p.MaxFile {
 			fail(w, 413, "Ogiltigt filnamn eller fil-/delningsgräns överskriden")
 			return nil, false
 		}
@@ -218,7 +390,7 @@ func (a *App) planExtraction(w http.ResponseWriter, u User, f LibraryFile, reade
 
 	// The new folder is named after the archive, numbered if that name is taken.
 	plan := &extraction{share: randomID(), top: randomID(), entries: entries, skipped: skipped}
-	base := strings.TrimSuffix(f.Name, filepath.Ext(f.Name))
+	_, base := archiveFormat(f.Name)
 	if !validFolder(base) {
 		base = "Archive"
 	}
@@ -268,7 +440,7 @@ func (a *App) planExtraction(w http.ResponseWriter, u User, f LibraryFile, reade
 		entry.id = randomID()
 		entry.folder = ids[entry.dir]
 		entry.path = filepath.Join(dir, entry.id)
-		size := int64(entry.file.UncompressedSize64)
+		size := entry.item.size
 		for _, step := range []struct {
 			query string
 			args  []any
@@ -295,23 +467,52 @@ func parentDir(d string) string {
 	return ""
 }
 
-// write unpacks every file; it runs without the app lock.
-func (plan *extraction) write() error {
-	for _, entry := range plan.entries {
-		if e := writeEntry(entry); e != nil {
+// write unpacks every file; it runs without the app lock. A tar file is
+// read through again, and each file must come where and as it was listed.
+func (plan *extraction) write(ctx context.Context) error {
+	if plan.format == "zip" {
+		for _, entry := range plan.entries {
+			if e := writeEntry(entry, entry.item.zip.Open); e != nil {
+				return e
+			}
+		}
+		return nil
+	}
+	reader, e := tarStream(ctx, plan.archive, plan.size, plan.format, plan.limit)
+	if e != nil {
+		return e
+	}
+	next := 0
+	for index := 0; next < len(plan.entries); index++ {
+		h, e := reader.Next()
+		if e == io.EOF {
+			e = io.ErrUnexpectedEOF
+		}
+		if e != nil {
 			return e
 		}
+		entry := plan.entries[next]
+		if index != entry.index {
+			continue
+		}
+		if h.Name != entry.item.name || h.Size != entry.item.size || h.Typeflag != tar.TypeReg {
+			return errors.New("the archive is not the one that was listed")
+		}
+		if e := writeEntry(entry, func() (io.ReadCloser, error) { return io.NopCloser(reader), nil }); e != nil {
+			return e
+		}
+		next++
 	}
 	return nil
 }
 
-func writeEntry(entry zipEntry) error {
-	source, e := entry.file.Open()
+func writeEntry(entry zipEntry, open func() (io.ReadCloser, error)) error {
+	source, e := open()
 	if e != nil {
 		return e
 	}
 	defer source.Close()
-	size := int64(entry.file.UncompressedSize64)
+	size := entry.item.size
 	target, e := os.OpenFile(entry.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
 	if e != nil {
 		return e
@@ -334,7 +535,7 @@ func writeEntry(entry zipEntry) error {
 func (plan *extraction) finish(a *App) error {
 	for _, entry := range plan.entries {
 		info, e := os.Lstat(entry.path)
-		if e != nil || !info.Mode().IsRegular() || info.Size() != int64(entry.file.UncompressedSize64) {
+		if e != nil || !info.Mode().IsRegular() || info.Size() != entry.item.size {
 			return errors.New("an unpacked file is missing or has the wrong size")
 		}
 	}

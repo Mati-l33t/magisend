@@ -2,6 +2,10 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+- **Unpacking archives:** besides ZIP, the library now unpacks `.tar`, `.tar.gz` / `.tgz` and `.tar.bz2` files with **Extract here**. Only plain files and folders are taken from them; links, devices and names that would leave the folder are left out, and an archive that unpacks to far more than the owner's quota is not read through.
+
 ## 1.0.8
 
 Fixes from a third review, of the 1.0.7 changes.

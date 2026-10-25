@@ -9,10 +9,7 @@
     "Change your own password and two-step login in your account settings",
     "Ändra ditt eget lösenord och din tvåstegsinloggning i dina kontoinställningar"
   ],
-  "extraction_running": [
-    "The ZIP file is still being unpacked",
-    "ZIP-filen packas fortfarande upp"
-  ],
+  "extraction_running": ["The archive is still being unpacked", "Arkivet packas fortfarande upp"],
   "location_not_removed": [
     "The location data in a photo could not be removed",
     "Platsdata i ett foto kunde inte tas bort"
@@ -254,20 +251,24 @@
     "Testaviseringen kunde inte levereras"
   ],
   "zip_invalid": [
-    "This ZIP file cannot be unpacked: it is damaged or its contents do not match.",
-    "Den här ZIP-filen går inte att packa upp: den är skadad eller innehållet stämmer inte."
+    "This archive cannot be unpacked: it is damaged or its contents do not match.",
+    "Det här arkivet går inte att packa upp: det är skadat eller innehållet stämmer inte."
   ],
   "zip_empty": [
-    "There is nothing in this ZIP file to unpack.",
-    "Det finns inget att packa upp i den här ZIP-filen."
+    "There is nothing in this archive to unpack.",
+    "Det finns inget att packa upp i det här arkivet."
   ],
   "zip_too_many": [
-    "This ZIP file holds more than 1,000 files; a folder holds at most 1,000.",
-    "ZIP-filen innehåller fler än 1 000 filer; en mapp rymmer högst 1 000."
+    "This archive holds more than 1,000 files; a folder holds at most 1,000.",
+    "Arkivet innehåller fler än 1 000 filer; en mapp rymmer högst 1 000."
   ],
   "backup_invalid": [
     "Use an absolute folder MagiSend can write to, a daily or weekly schedule, and keep 1–100 backups.",
     "Ange en absolut mapp som MagiSend kan skriva i, ett dagligt eller veckovis schema, och behåll 1–100 säkerhetskopior."
   ],
-  "backup_running": ["A backup is already running.", "En säkerhetskopiering pågår redan."]
+  "backup_running": ["A backup is already running.", "En säkerhetskopiering pågår redan."],
+  "archive_changed": [
+    "The archive changed while it was being read. Try again.",
+    "Arkivet ändrades medan det lästes. Försök igen."
+  ]
 }
