@@ -171,3 +171,45 @@ func TestLargeJPEGIsPreviewedByItsHeader(t *testing.T) {
 		t.Fatal("a PNG took the JPEG path")
 	}
 }
+
+// pngSized is a small PNG whose header claims width × height, with a correct
+// checksum, so only the size makes it unacceptable.
+func pngSized(t *testing.T, width, height uint32) []byte {
+	var out bytes.Buffer
+	if e := png.Encode(&out, image.NewGray(image.Rect(0, 0, 2, 2))); e != nil {
+		t.Fatal(e)
+	}
+	data := out.Bytes()
+	binary.BigEndian.PutUint32(data[16:], width)
+	binary.BigEndian.PutUint32(data[20:], height)
+	binary.BigEndian.PutUint32(data[29:], crc32.ChecksumIEEE(data[12:29]))
+	return data
+}
+
+// A PNG above 16 megapixels is previewed by its structure; one above 200,
+// with a damaged chunk, or animated, is refused.
+func TestLargePNGIsPreviewedByItsStructure(t *testing.T) {
+	var huge bytes.Buffer
+	if e := png.Encode(&huge, image.NewGray(image.Rect(0, 0, 4097, 4097))); e != nil {
+		t.Fatal(e)
+	}
+	path := filepath.Join(t.TempDir(), "big.png")
+	check := func(data []byte) bool {
+		os.WriteFile(path, data, 0600)
+		f, _ := os.Open(path)
+		defer f.Close()
+		kind, ok := headerPreview(f, int64(len(data)))
+		return ok && kind == "image/png"
+	}
+	if !check(huge.Bytes()) {
+		t.Fatal("a 17 MP PNG was refused")
+	}
+	damaged := append([]byte{}, huge.Bytes()...)
+	damaged[len(damaged)/2] ^= 0xff
+	if check(damaged) {
+		t.Fatal("a damaged PNG was accepted")
+	}
+	if check(pngSized(t, 20000, 20000)) {
+		t.Fatal("a 400 MP PNG was accepted")
+	}
+}

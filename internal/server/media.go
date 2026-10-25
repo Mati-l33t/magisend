@@ -12,9 +12,9 @@ import (
 )
 
 // Text files shown as plain text in the viewer: a known text extension, at
-// most 2 MiB, valid UTF-8 and no NUL bytes. Served as text/plain, so nothing
+// most 20 MiB, valid UTF-8 and no NUL bytes. Served as text/plain, so nothing
 // in them is ever run or rendered; HTML shows as its source.
-const textPreviewMaxBytes = 2 << 20
+const textPreviewMaxBytes = 20 << 20
 
 var textPreviewExtensions = map[string]bool{}
 

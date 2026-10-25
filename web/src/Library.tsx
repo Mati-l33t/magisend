@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePaged, ShowMore } from './Paging';
 import { Select } from './Select';
-import FilePreview, { previewKind } from './FilePreview';
+import FilePreview from './FilePreview';
 import { chosenFolder, droppedEntries, type Gathered } from './folderFiles';
 import { childFolders, folderChain, folderLabel, folderOptions, folderSubtree } from './folderTree';
 import {
@@ -622,7 +622,7 @@ export default function Library({ me, reload }: { me: Me; reload: () => Promise<
   );
   const fileName = (f: LibraryFile, complete: boolean) => (
     <div className="file-name">
-      {complete && previewKind(f.name) ? (
+      {complete ? (
         <button
           className="filename-preview"
           onClick={() =>

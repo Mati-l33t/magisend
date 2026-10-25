@@ -17,6 +17,7 @@ import { copyText } from './clipboard';
 import { responseData, type SharedFile } from './api';
 import { t, useLanguage, useMessage, message, LocalizedError, formatNumber } from './i18n';
 import Zoomable from './Zoom';
+import { browserDraws, heifToJPEG, isHeif } from './heic';
 
 const PdfView = lazy(() => import('./PdfView'));
 const DocxView = lazy(() => import('./DocxView'));
@@ -24,10 +25,13 @@ const SheetView = lazy(() => import('./SheetView'));
 const Markdown = lazy(() => import('./Markdown'));
 const CodeView = lazy(() => import('./CodeView'));
 const maxBytes = 20 * 1024 * 1024;
-// Large phone photos (up to 200 MP) are JPEGs the server sends as they are.
+// Large phone photos (up to 200 MP), AVIF and HEIC are checked by the server
+// and sent as they are.
 const maxImageBytes = 64 * 1024 * 1024;
-const maxPixels = 16_000_000;
-const maxJPEGPixels = 200_000_000;
+const maxPixels = 200_000_000;
+// Larger text is shown plain, without line numbers or colours, which is far
+// quicker for the browser to lay out.
+const plainTextAbove = 2 * 1024 * 1024;
 
 // Which viewer a file name suggests; the server checks the actual content.
 export type PreviewKind = 'image' | 'pdf' | 'video' | 'audio' | 'text' | 'document' | 'sheet';
@@ -39,7 +43,24 @@ const textExtensions = new Set(
 export function previewKind(name: string): PreviewKind | null {
   const ext = name.toLowerCase().split('.').pop() || '';
   if (name.includes('.') && textExtensions.has(ext)) return 'text';
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image';
+  if (
+    [
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'webp',
+      'avif',
+      'svg',
+      'heic',
+      'heif',
+      'bmp',
+      'tif',
+      'tiff',
+      'ico',
+    ].includes(ext)
+  )
+    return 'image';
   if (ext === 'pdf') return 'pdf';
   if (ext === 'docx') return 'document';
   if (ext === 'xlsx') return 'sheet';
@@ -47,12 +68,23 @@ export function previewKind(name: string): PreviewKind | null {
   if (['mp3', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac'].includes(ext)) return 'audio';
   return null;
 }
-const rasterTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const rasterTypes = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+  'image/avif',
+  'image/heic',
+  'image/heif',
+  'image/svg+xml',
+  'image/x-icon',
+]);
 function unsupported() {
   return new LocalizedError(message('errors.preview_unsupported'));
 }
 async function previewBlob(response: Response, type: string) {
-  const limit = type === 'image/jpeg' ? maxImageBytes : maxBytes;
+  const limit = type.startsWith('image/') ? maxImageBytes : maxBytes;
   const length = response.headers.get('Content-Length');
   if (length !== null && Number(length) > limit) {
     await response.body?.cancel();
@@ -115,8 +147,6 @@ export default function FilePreview({
   const dialog = useRef<HTMLDialogElement>(null);
   const objectURL = useRef<string | null>(null);
   const [source, setSource] = useState('');
-  // The checked type of the picture shown, which decides its size limit.
-  const sourceType = useRef('');
   const [text, setText] = useState<string | null>(null);
   const markdown = /\.(md|markdown)$/i.test(file.name);
   const [formatted, setFormatted] = useState(true);
@@ -137,7 +167,7 @@ export default function FilePreview({
       '/files/' +
       encodeURIComponent(file.id);
   const download = library ? base + '/download' : base;
-  const kind = previewKind(file.name) || 'image';
+  const kind = previewKind(file.name) ?? 'none';
   useEffect(() => {
     if (dialog.current?.showModal) dialog.current.showModal();
     else dialog.current?.setAttribute('open', '');
@@ -240,8 +270,12 @@ export default function FilePreview({
           await response.body?.cancel();
           throw unsupported();
         }
-        const blob = await previewBlob(response, type);
+        let blob = await previewBlob(response, type);
         if (!active || controller.signal.aborted) return;
+        if (isHeif(type) && !(await browserDraws(blob))) {
+          blob = await heifToJPEG(blob);
+          if (!active || controller.signal.aborted) return;
+        }
         if (textual) {
           const content = await blob.text();
           if (active) setText(content);
@@ -249,7 +283,6 @@ export default function FilePreview({
         }
         url = URL.createObjectURL(blob);
         objectURL.current = url;
-        sourceType.current = type;
         setSource(url);
       } catch (e) {
         if (active && !controller.signal.aborted) setError(e as Error);
@@ -393,15 +426,22 @@ export default function FilePreview({
             onError={rejectImage}
             onLoad={(event) => {
               const image = event.currentTarget;
-              const limit = sourceType.current === 'image/jpeg' ? maxJPEGPixels : maxPixels;
-              if (image.naturalWidth * image.naturalHeight > limit) rejectImage();
-              else setNatural({ width: image.naturalWidth, height: image.naturalHeight });
+              if (image.naturalWidth * image.naturalHeight > maxPixels) rejectImage();
+              // An SVG without a size of its own is shown as a square.
+              else
+                setNatural({
+                  width: image.naturalWidth || 1024,
+                  height: image.naturalHeight || 1024,
+                });
             }}
           />
         </Zoomable>
       )}
+      {kind === 'none' && <p className="muted">{t('preview.none')}</p>}
       {text !== null &&
-        (markdown && formatted ? (
+        (text.length > plainTextAbove ? (
+          <pre className={'preview-text preview-plain' + (wrap ? ' wrap' : '')}>{text}</pre>
+        ) : markdown && formatted ? (
           <Suspense fallback={<pre className="preview-text">{text}</pre>}>
             <div className="preview-text preview-markdown">
               <Markdown text={text} />

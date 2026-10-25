@@ -13,6 +13,7 @@ RUN [ "$(/out/magisend --version)" = "$VERSION" ] \
 FROM scratch
 COPY --from=files /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=files /out/magisend /magisend
+COPY LICENSE THIRD-PARTY-NOTICES.md /
 COPY --from=files --chown=10001:10001 /out/data /data
 COPY --from=files /out/tmp /tmp
 ENV MAGISEND_DATA=/data \

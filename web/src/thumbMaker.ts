@@ -1,4 +1,5 @@
 import { extension } from './fileKind';
+import { browserDraws, heifToJPEG, isHeif } from './heic';
 
 // Pictures the server cannot draw itself: the first page of a PDF, a frame of
 // a video, and image types beyond PNG, JPEG and GIF. The owner's browser draws
@@ -98,7 +99,9 @@ async function videoFrame(url: string) {
 }
 
 async function imageFrame(blob: Blob, name: string) {
-  const typed = new Blob([blob], { type: imageTypes[extension(name)] || blob.type });
+  let typed = new Blob([blob], { type: imageTypes[extension(name)] || blob.type });
+  // Only Safari draws HEIC itself; elsewhere it is decoded here first.
+  if (isHeif(typed.type) && !(await browserDraws(typed))) typed = await within(heifToJPEG(typed));
   const url = URL.createObjectURL(typed);
   try {
     const image = new Image();

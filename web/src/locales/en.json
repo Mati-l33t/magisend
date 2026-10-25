@@ -290,6 +290,7 @@
   "public.expiry": "The link disappears after expiry",
   "public.permanent": "Available until the sender deletes the share",
   "preview.title": "Preview: {name}",
+  "preview.none": "There is no preview for this kind of file. Download it to open it.",
   "preview.loading": "Loading preview…",
   "preview.fullscreen": "Full screen",
   "preview.exitFullscreen": "Exit full screen",

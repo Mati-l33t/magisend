@@ -1851,6 +1851,10 @@ textarea.text-editor {
   overflow-wrap: anywhere;
   tab-size: 4;
 }
+.file-preview .preview-plain:not(.wrap) {
+  white-space: pre;
+  overflow-wrap: normal;
+}
 .file-preview .preview-markdown {
   font-family: var(--sans);
   font-size: 15px;

@@ -290,6 +290,7 @@
   "public.expiry": "Länken försvinner efter utgångstiden",
   "public.permanent": "Tillgänglig tills avsändaren raderar delningen",
   "preview.title": "Förhandsvisning: {name}",
+  "preview.none": "Den här sortens fil kan inte förhandsvisas. Ladda ner den för att öppna den.",
   "preview.loading": "Laddar förhandsvisning…",
   "preview.fullscreen": "Helskärm",
   "preview.exitFullscreen": "Lämna helskärm",

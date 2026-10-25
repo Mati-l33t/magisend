@@ -43,7 +43,9 @@ type App struct {
 	thumbInline chan struct{}
 	unlockGates [unlockGateCount]chan struct{}
 	install     string
-	stopping    atomic.Bool
+	// One picture conversion for a preview at a time.
+	previewConvert chan struct{}
+	stopping       atomic.Bool
 	// The site URL for links (linkOrigin).
 	siteURL atomic.Value
 	// Library containers a ZIP is being unpacked into.
@@ -155,6 +157,7 @@ func NewApp(root, origin string) (*App, error) {
 	a.tokenUploads.user = map[string]int64{}
 	a.extracting = map[string]bool{}
 	a.thumbInline = make(chan struct{}, 2)
+	a.previewConvert = make(chan struct{}, 1)
 	for i := range a.unlockGates {
 		a.unlockGates[i] = make(chan struct{}, 1)
 	}
@@ -511,7 +514,7 @@ func (a *App) Handler() http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; font-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; font-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		if a.secureOrigin() {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}

@@ -28,7 +28,7 @@ for arch in "$@"; do
     --build-arg "VERSION=$version" --output "type=local,dest=$work/bin-$arch" "$root"
   mkdir -p "$work/$name/deploy"
   install -m 0755 "$work/bin-$arch/magisend" "$work/$name/magisend"
-  install -m 0644 "$root/LICENSE" "$root/README.md" "$root/CHANGELOG.md" "$work/$name/"
+  install -m 0644 "$root/LICENSE" "$root/THIRD-PARTY-NOTICES.md" "$root/README.md" "$root/CHANGELOG.md" "$work/$name/"
   install -m 0644 "$root"/deploy/*.service "$root"/deploy/*.path "$work/$name/deploy/"
   install -m 0755 "$root/deploy/update.sh" "$root/install.sh" "$work/$name/deploy/"
   tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \

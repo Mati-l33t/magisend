@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"golang.org/x/image/bmp"
 	"golang.org/x/image/webp"
 )
 
@@ -93,32 +94,66 @@ func (a *App) previewWith(w http.ResponseWriter, r *http.Request, authorize func
 	// Authorization, offset, backend and actual storage are checked before
 	// examining the content. Both bytes and decoding work stay off mu.
 	// Phone photos can be far larger than what is decoded here (a 200 MP
-	// camera): a JPEG beyond those limits is checked by its header only and
-	// sent as it is, for the browser to show, never decoded on the server.
-	if large, ok := largeJPEG(file, selected.Size); ok {
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": selected.Name}))
-		http.ServeContent(w, r, selected.Name, time.Time{}, large)
+	// camera), and AVIF and HEIC are not decoded here at all: those are
+	// checked by their structure only and sent as they are, for the browser
+	// to show, never decoded on the server.
+	inline := mime.FormatMediaType("inline", map[string]string{"filename": selected.Name})
+	if contentType, ok := headerPreview(file, selected.Size); ok {
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", inline)
+		http.ServeContent(w, r, selected.Name, time.Time{}, io.NewSectionReader(file, 0, selected.Size))
 		return
 	}
-	if selected.Size > previewMaxBytes {
+	limit := previewMaxBytes
+	head := make([]byte, 4)
+	if _, e := file.ReadAt(head, 0); e == nil && isTIFF(head) {
+		limit = tiffPreviewMaxBytes
+	}
+	if selected.Size > limit {
 		fail(w, 415, "preview_unsupported")
 		return
 	}
-	data, e := io.ReadAll(io.LimitReader(file, previewMaxBytes+1))
-	if e != nil || int64(len(data)) != selected.Size || int64(len(data)) > previewMaxBytes {
+	data, e := io.ReadAll(io.LimitReader(file, limit+1))
+	if e != nil || int64(len(data)) != selected.Size || int64(len(data)) > limit {
 		fail(w, 415, "preview_unsupported")
+		return
+	}
+	// TIFF is shown as PNG, the same pixels in a form every browser draws.
+	if isTIFF(data) {
+		converted, ok := a.convertPreview(r, func() ([]byte, bool) { return tiffPreview(data) })
+		if !ok {
+			fail(w, 415, "preview_unsupported")
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Disposition", inline)
+		http.ServeContent(w, r, selected.Name, time.Time{}, bytes.NewReader(converted))
 		return
 	}
 	contentType, ok := rasterPreviewType(data)
+	if !ok {
+		contentType, ok = documentPreview(selected.Name, data)
+	}
 	if !ok {
 		fail(w, 415, "preview_unsupported")
 		return
 	}
 	// Serve the validated original, not a lossy re-encoding or filename guess.
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": selected.Name}))
+	w.Header().Set("Content-Disposition", inline)
 	http.ServeContent(w, r, selected.Name, time.Time{}, bytes.NewReader(data))
+}
+
+// convertPreview runs one picture conversion at a time, which can need a few
+// hundred megabytes; a visitor waits for a turn while the request lasts.
+func (a *App) convertPreview(r *http.Request, convert func() ([]byte, bool)) ([]byte, bool) {
+	select {
+	case a.previewConvert <- struct{}{}:
+	case <-r.Context().Done():
+		return nil, false
+	}
+	defer func() { <-a.previewConvert }()
+	return convert()
 }
 
 func rasterPreviewType(data []byte) (string, bool) {
@@ -131,6 +166,15 @@ func rasterPreviewType(data []byte) (string, bool) {
 		}
 		_, e = webp.Decode(bytes.NewReader(data))
 		return "image/webp", e == nil
+	}
+	// BMP likewise, by its own decoder.
+	if bytes.HasPrefix(data, []byte("BM")) {
+		config, e := bmp.DecodeConfig(bytes.NewReader(data))
+		if e != nil || config.Width <= 0 || config.Height <= 0 || config.Width > previewMaxPixels/config.Height {
+			return "", false
+		}
+		_, e = bmp.Decode(bytes.NewReader(data))
+		return "image/bmp", e == nil
 	}
 	config, format, e := image.DecodeConfig(bytes.NewReader(data))
 	if e != nil || config.Width <= 0 || config.Height <= 0 || config.Width > previewMaxPixels/config.Height {

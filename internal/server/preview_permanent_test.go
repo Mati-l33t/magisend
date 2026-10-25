@@ -439,12 +439,8 @@ func TestPreviewRejectsUnsafeMalformedAndOversizeImages(t *testing.T) {
 	a := testApp(t)
 	setupAdmin(t, a)
 	owner := login(t, a, "mati")
-	var small, huge bytes.Buffer
+	var small bytes.Buffer
 	if e := png.Encode(&small, image.NewGray(image.Rect(0, 0, 2, 2))); e != nil {
-		t.Fatal(e)
-	}
-	// A real, highly compressible raster above 16 MP; bounded to ~17 MB raw.
-	if e := png.Encode(&huge, image.NewGray(image.Rect(0, 0, 4097, 4097))); e != nil {
 		t.Fatal(e)
 	}
 	for _, tc := range []struct {
@@ -459,7 +455,7 @@ func TestPreviewRejectsUnsafeMalformedAndOversizeImages(t *testing.T) {
 		{"bad-crc.png", append(append([]byte{}, small.Bytes()[:small.Len()-1]...), small.Bytes()[small.Len()-1]^0xff)},
 		{"document.pdf", []byte("%PDF-1.7\nnot for inline preview")},
 		{"program.png", []byte("MZ\x00\x00executable")},
-		{"too-many-pixels.png", huge.Bytes()},
+		{"too-many-pixels.png", pngSized(t, 20000, 20000)},
 		// A valid PNG followed by padding exceeds the byte cap independently
 		// of dimensions. Normal attachment download must still preserve it.
 		{"too-many-bytes.png", append(append([]byte{}, small.Bytes()...), make([]byte, 20<<20)...)},

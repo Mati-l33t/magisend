@@ -35,6 +35,7 @@ COPY --from=server /out/magisend /magisend
 FROM scratch
 COPY --from=server /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=server /out/magisend /magisend
+COPY LICENSE THIRD-PARTY-NOTICES.md /
 COPY --from=server --chown=10001:10001 /out/data /data
 COPY --from=server /out/tmp /tmp
 ENV MAGISEND_DATA=/data \
