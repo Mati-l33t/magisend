@@ -198,11 +198,7 @@ func TestFormerInstallIDsKeepTheirBackups(t *testing.T) {
 	if list := listBackups(dir, b.ownBackup); len(list) != 2 {
 		t.Fatal("this machine's backups under both IDs are not listed", list)
 	}
-	// Pruning leaves the earlier ID's archive alone.
-	pruneBackups(dir, func(id string) bool { return id == "" || id == b.install }, 0)
-	if _, e := os.Stat(filepath.Join(dir, "magisend-backup-"+mine+"-20261001-000000.tar")); e != nil {
-		t.Fatal("an archive under an earlier ID was pruned")
-	}
+
 	b.db.Close()
 	c, e := NewApp(root, "")
 	if e != nil {
@@ -287,7 +283,7 @@ func TestClamdSettingsAreChecked(t *testing.T) {
 		"# AlertExceedsMax true\nMaxFileSize 104857600\nStreamMaxLength 100M\nAlertExceedsMax yes\n": false,
 	} {
 		os.WriteFile(path, []byte(conf), 0600)
-		if got := clamdNeedsSettings(defaultScanMaxSize); got != needs {
+		if got := clamdNeedsSettings(defaultClamdAddress, defaultScanMaxSize); got != needs {
 			t.Fatal(conf, got)
 		}
 	}

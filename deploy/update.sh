@@ -168,15 +168,23 @@ clamd_set() { # key value: sets one clamd.conf setting
   fi
 }
 install_clamav() {
-  local memory
+  local memory installed package
   trap 'clamav_status failed stopped "The ClamAV installation stopped"; exit 1' ERR TERM INT HUP
   command -v apt-get > /dev/null || { clamav_status failed apt "ClamAV can only be installed here with apt"; exit 1; }
   memory=$(awk '/^MemTotal/ {print int($2 / 1024)}' /proc/meminfo)
-  [ "$memory" -ge 2400 ] || { clamav_status failed memory "ClamAV needs at least 2.5 GB of memory and this system has $memory MB"; exit 1; }
-  clamav_status running packages "Installing ClamAV"
-  { DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav-daemon clamav-freshclam > /dev/null; } < /dev/null ||
-    { clamav_status failed packages "The ClamAV packages could not be installed"; exit 1; }
+  # Already installed (its settings or start being repaired): no packages
+  # are fetched and the memory it runs with is left to the admin.
+  installed=1
+  for package in clamav-daemon clamav-freshclam; do
+    dpkg-query -W -f='${Status}' "$package" 2> /dev/null | grep -q 'install ok installed' || installed=0
+  done
+  if [ "$installed" = 0 ]; then
+    [ "$memory" -ge 2400 ] || { clamav_status failed memory "ClamAV needs at least 2.5 GB of memory and this system has $memory MB"; exit 1; }
+    clamav_status running packages "Installing ClamAV"
+    { DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav-daemon clamav-freshclam > /dev/null; } < /dev/null ||
+      { clamav_status failed packages "The ClamAV packages could not be installed"; exit 1; }
+  fi
   # Files up to 100 MB are scanned whole, matching MagiSend's default (Debian
   # stops at 25 MB). A file ClamAV cannot scan whole is reported as such, so
   # MagiSend marks it unscanned instead of clean.
@@ -215,11 +223,13 @@ install_clamav() {
 REQUEST="$DATA/.clamav-requested"
 CLAMAV=0
 [ "${1:-}" = --clamav ] && CLAMAV=1
-if [ -n "${INVOCATION_ID:-}" ] && [ -f "$REQUEST" ] && [ ! -L "$REQUEST" ] &&
-  [ -n "$(find "$REQUEST" -maxdepth 0 -mmin -20 2> /dev/null)" ]; then
-  CLAMAV=1
+if [ -n "${INVOCATION_ID:-}" ]; then
+  if [ -f "$REQUEST" ] && [ ! -L "$REQUEST" ] && [ -n "$(find "$REQUEST" -maxdepth 0 -mmin -20 2> /dev/null)" ]; then
+    CLAMAV=1
+  fi
+  # A run by hand leaves the request for the service.
+  rm -f -- "$REQUEST" 2> /dev/null || true
 fi
-rm -f -- "$REQUEST" 2> /dev/null || true
 if [ "$CLAMAV" = 1 ]; then
   install_clamav
 fi

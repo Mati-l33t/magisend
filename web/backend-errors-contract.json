@@ -298,5 +298,9 @@
   "archive_timeout": [
     "Unpacking took too long and was stopped. Try a smaller archive.",
     "Uppackningen tog för lång tid och avbröts. Prova ett mindre arkiv."
+  ],
+  "replace_edited": [
+    "That file was edited and has versions of its own; choose a file that was not edited as the new version.",
+    "Den filen har redigerats och har egna versioner; välj en fil som inte har redigerats som ny version."
   ]
 }

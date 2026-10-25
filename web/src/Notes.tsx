@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, Folder as FolderIcon, Inbox, NotebookPen, Plus, Search, Star } from 'lucide-react';
 import { api, type Folder } from './api';
+import { useFollow } from './follow';
 import { folderLabel } from './folderTree';
 import { formatDate, t, useLanguage, useMessage } from './i18n';
 import MoreMenu, { type MenuItem } from './MoreMenu';
@@ -16,6 +17,8 @@ export interface Note {
   auto: boolean;
   starred: boolean;
   excerpt: string;
+  // Held back by its virus scan: its text is not shown yet.
+  scan?: 'pending' | 'infected';
 }
 
 // The opening of a note as plain words: Markdown signs and the line the
@@ -61,6 +64,19 @@ export default function Notes({
       .then((list) => setNotes(Array.isArray(list) ? list : []))
       .catch((e) => setError(e as Error));
   }, [version]);
+  // Notes waiting for their scan show their text once it is done.
+  const waiting = (notes ?? [])
+    .filter((n) => n.scan === 'pending')
+    .map((n) => n.id)
+    .join(',');
+  useFollow(
+    !!waiting,
+    async () => {
+      const list = await api<Note[]>('/api/library/notes');
+      setNotes(Array.isArray(list) ? list : []);
+    },
+    waiting,
+  );
   const words = query.trim().toLocaleLowerCase();
   const shown = (notes ?? []).filter(
     (n) => !words || (n.name + ' ' + n.excerpt).toLocaleLowerCase().includes(words),

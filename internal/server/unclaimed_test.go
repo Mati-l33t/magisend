@@ -76,6 +76,9 @@ func TestFilesUnknownAfterARestoreComeBack(t *testing.T) {
 	anna = login(t, a, "anna")
 	folderCall(t, a, anna, "GET", "/api/admin/storage/unclaimed", "", 403)
 
+	// What comes back is scanned, its origin being unknown.
+	address, _ := fakeClamd(t, 1<<20)
+	setScanning(t, a, admin, "received", address, 50<<20)
 	got := folderCall(t, a, admin, "POST", "/api/admin/storage/unclaimed/restore", `{}`, 200)
 	if got["restored"] != float64(1) || got["failed"] != float64(0) {
 		t.Fatal(got)
@@ -91,11 +94,15 @@ func TestFilesUnknownAfterARestoreComeBack(t *testing.T) {
 	if restored == nil {
 		t.Fatal("not back in anna's library", files)
 	}
+	if state := scanStateOf(a, restored.ID); state != "pending" {
+		t.Fatal("a file put back was not queued for its scan", state)
+	}
 	var folderName, parentName string
 	a.db.QueryRow("SELECT f.name,p.name FROM folders f JOIN folders p ON p.id=f.parent WHERE f.id=?", restored.FolderID).Scan(&folderName, &parentName)
 	if folderName != "Plans" || parentName != "Work" {
 		t.Fatal("not back in its folder", parentName, folderName)
 	}
+	scanAllNow(a)
 	if w := call(a, "GET", "/api/library/files/"+restored.ID+"/download", "", anna); w.Body.String() != "made after the backup" {
 		t.Fatal(w.Code, w.Body)
 	}

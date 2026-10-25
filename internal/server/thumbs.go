@@ -31,7 +31,7 @@ var errNoThumbnail = errors.New("no thumbnail")
 
 func (a *App) thumbnailWorker() {
 	for id := range a.thumbs {
-		if e := a.generateThumbnail(id); e != nil {
+		if e := a.generateThumbnail(context.Background(), id); e != nil {
 			a.noteThumbnailFailure(id, e)
 		}
 	}
@@ -73,7 +73,10 @@ func (a *App) requestThumbnail(fileID string) {
 		default:
 			return
 		}
-		if e := a.generateThumbnail(fileID); e != nil {
+		// It waits only briefly for a decoding turn, which previews need more.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if e := a.generateThumbnail(ctx, fileID); e != nil && !errors.Is(e, errThumbBusy) {
 			a.noteThumbnailFailure(fileID, e)
 		}
 		return
@@ -128,7 +131,11 @@ func (a *App) hasThumbnail(fileID string) bool {
 // Decoding stays outside mu: only the bounded read and the final insert touch
 // shared state, and a concurrent delete removes the row again through the
 // foreign key rather than leaving metadata for missing bytes.
-func (a *App) generateThumbnail(fileID string) error {
+// errThumbBusy is a thumbnail that found no decoding turn in time; it is
+// asked for again on a later visit.
+var errThumbBusy = errors.New("no decoding turn")
+
+func (a *App) generateThumbnail(ctx context.Context, fileID string) error {
 	a.mu.Lock()
 	var size int64
 	var backend string
@@ -159,7 +166,10 @@ func (a *App) generateThumbnail(fileID string) error {
 	}
 	// Reuse the preview preflight so animated or malformed rasters never reach
 	// the encoder, then decode exactly the bytes that preflight accepted.
-	release, _ := a.decodeSlot(context.Background())
+	release, turn := a.decodeSlot(ctx)
+	if !turn {
+		return errThumbBusy
+	}
 	source, ok := decodeRaster(data)
 	release()
 	if !ok {
@@ -242,12 +252,9 @@ func (a *App) putThumbnail(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "thumbnail_unavailable")
 		return
 	}
-	release, ok := a.decodeSlot(r.Context())
-	if !ok {
-		return
-	}
+	// At most thumbUploadMaxEdge on each side, so small enough to decode
+	// without a turn.
 	source, ok := decodeRaster(data)
-	release()
 	if !ok {
 		fail(w, 400, "thumbnail_unavailable")
 		return

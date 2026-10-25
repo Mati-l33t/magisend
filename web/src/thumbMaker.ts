@@ -50,9 +50,17 @@ function fileUrl(source: { shareId: string; fileId: string }, part = '') {
 // The file is held back by its virus scan: tried again once it is done.
 class HeldBack extends Error {}
 
+// Whether a refused read was the virus scan's doing.
+async function heldBack(response: Response) {
+  if (response.status === 423) return true;
+  if (response.status !== 403) return false;
+  const body = (await response.json().catch(() => null)) as { error_code?: string } | null;
+  return body?.error_code === 'file_infected';
+}
+
 async function fetched(url: string, limit: number) {
   const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
-  if (response.status === 423 || response.status === 403) throw new HeldBack('held back');
+  if (await heldBack(response)) throw new HeldBack('held back');
   if (!response.ok || Number(response.headers.get('Content-Length') || 0) > limit)
     throw new Error('unavailable');
   const blob = await response.blob();
@@ -141,11 +149,12 @@ async function drawn(source: Source, name: string): Promise<HTMLCanvasElement> {
     // a broken one, so that is asked first.
     const url = fileUrl(source.server, '/media');
     const probe = await fetch(url, {
-      method: 'HEAD',
       credentials: 'same-origin',
       cache: 'no-store',
+      headers: { Range: 'bytes=0-0' },
     });
-    if (probe.status === 423 || probe.status === 403) throw new HeldBack('held back');
+    if (await heldBack(probe)) throw new HeldBack('held back');
+    await probe.body?.cancel();
     return videoFrame(url);
   }
   const blob = source.local ?? (await fetched(fileUrl(source.server), maxImageBytes));
@@ -240,7 +249,8 @@ async function make(shareId: string, fileId: string, name: string, local?: File)
     if (!response.ok) throw new Error('refused');
     return true;
   } catch (e) {
-    if (!(e instanceof HeldBack)) rememberFailure(fileId);
+    if (e instanceof HeldBack) throw e;
+    rememberFailure(fileId);
     return false;
   } finally {
     endTry(fileId);
@@ -254,7 +264,13 @@ let queue: Promise<unknown> = Promise.resolve();
 function queued(shareId: string, fileId: string, name: string, local?: File) {
   let job = made.get(fileId);
   if (!job) {
-    job = queue.then(() => make(shareId, fileId, name, local));
+    job = queue
+      .then(() => make(shareId, fileId, name, local))
+      .catch((e) => {
+        // Held back by its scan: asked for again later.
+        if (e instanceof HeldBack) made.delete(fileId);
+        return false;
+      });
     queue = job;
     made.set(fileId, job);
   }

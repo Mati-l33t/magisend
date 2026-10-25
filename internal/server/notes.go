@@ -95,6 +95,8 @@ type Note struct {
 	Auto     bool   `json:"auto"`
 	Starred  bool   `json:"starred"`
 	Excerpt  string `json:"excerpt"`
+	// "pending" or "infected" while held back by its virus scan.
+	Scan string `json:"scan,omitempty"`
 	// Only when it was just made: the text's version, for the editor.
 	Version int `json:"version,omitempty"`
 }
@@ -134,10 +136,9 @@ func (a *App) noteRoutes(m *http.ServeMux) {
 		}
 		rows.Close()
 		// The opening of each note, for the list; not of one held back by its
-		// scan.
-		held := a.heldScans()
+		// scan (or whose scan cannot be read).
 		for i := range list {
-			if held[list[i].ID] != "" {
+			if list[i].Scan = a.scanHeld(list[i].ID); list[i].Scan != "" {
 				continue
 			}
 			if file, e := a.openCurrent(list[i].ID); e == nil {

@@ -100,6 +100,16 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 			failHeld(w, held)
 			return
 		}
+		// A file edited in the editor has versions of its own, and its
+		// contents are no longer the uploaded bytes.
+		var edited int
+		if internal(w, a.db.QueryRow("SELECT COUNT(*) FROM text_versions WHERE file_id=? AND (number>1 OR blob<>file_id)", source.ID).Scan(&edited)) {
+			return
+		}
+		if edited > 0 {
+			fail(w, 409, "replace_edited")
+			return
+		}
 		// Every version of a file lives in the same storage location.
 		if source.Backend != f.Backend {
 			respond(w, 409, map[string]string{"error": "The new version was stored in another storage location", "error_code": "replace_location"})
@@ -144,6 +154,9 @@ func (a *App) versionRoutes(m *http.ServeMux) {
 			query string
 			args  []any
 		}{
+			// The record of its own first version, if it was opened in the
+			// editor, would hold the same bytes twice.
+			{"DELETE FROM text_versions WHERE file_id=?", []any{source.ID}},
 			{"INSERT INTO text_versions(file_id,number,blob,size,name,created,actor) VALUES(?,?,?,?,?,?,?)", []any{f.ID, current + 1, source.ID, source.Size, source.Name, time.Now().Unix(), u.ID}},
 			{"UPDATE files SET size=?,offset=? WHERE id=?", []any{source.Size, source.Size, f.ID}},
 			{"DELETE FROM thumbnails WHERE file_id=?", []any{f.ID}},

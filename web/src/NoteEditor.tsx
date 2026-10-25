@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { History, ListChecks, LoaderCircle, Share2, Trash2, X } from 'lucide-react';
 import { api, ApiError } from './api';
+import { useFollow } from './follow';
 import { getLanguage, t, useLanguage, useMessage } from './i18n';
 import { toggleTask } from './Markdown';
 
@@ -44,6 +45,8 @@ export default function NoteEditor({
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'write' | 'read'>(note ? 'read' : 'write');
   const [loading, setLoading] = useState(!!note);
+  // The note waits for its virus scan: read again once it is done.
+  const [waiting, setWaiting] = useState(false);
   const [status, setStatus] = useState<'saved' | 'saving' | 'unsaved' | 'conflict'>('saved');
   const [error, setError] = useMessage();
   // The latest values, for saves that run after a render.
@@ -57,17 +60,31 @@ export default function NoteEditor({
     else dialog.current?.setAttribute('open', '');
     if (!note) area.current?.focus();
   }, []);
-  useEffect(() => {
+  async function loadText() {
     if (!note) return;
-    api<{ text: string; version: number }>('/api/library/files/' + note.id + '/text')
-      .then((state) => {
-        setText(state.text);
-        Object.assign(latest.current, { text: state.text, version: state.version });
-        if (!state.text) setMode('write');
-      })
-      .catch((e) => setError(e as Error))
-      .finally(() => setLoading(false));
+    try {
+      const state = await api<{ text: string; version: number }>(
+        '/api/library/files/' + note.id + '/text',
+      );
+      setText(state.text);
+      Object.assign(latest.current, { text: state.text, version: state.version });
+      if (!state.text) setMode('write');
+      setWaiting(false);
+      setLoading(false);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 423) {
+        setWaiting(true);
+        return;
+      }
+      setWaiting(false);
+      setError(e as Error);
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    void loadText();
   }, []);
+  useFollow(waiting, loadText);
 
   async function save() {
     if (saving.current) await saving.current;
@@ -124,6 +141,8 @@ export default function NoteEditor({
     await saving.current;
   }
   function update(next: { title?: string; text?: string }) {
+    // Nothing is changed before the note's text is known.
+    if (note && !latest.current.version) return;
     if (next.title !== undefined) setTitle(next.title);
     if (next.text !== undefined) setText(next.text);
     Object.assign(latest.current, next, { dirty: true });
@@ -134,6 +153,10 @@ export default function NoteEditor({
   }
   async function finish() {
     window.clearTimeout(timer.current);
+    if (note && !latest.current.version) {
+      close();
+      return;
+    }
     await save();
     if (latest.current.dirty) return;
     close();
@@ -253,7 +276,8 @@ export default function NoteEditor({
       )}
       {loading ? (
         <p role="status" className="muted">
-          <LoaderCircle className="spin" size={16} /> {t('preview.loading')}
+          <LoaderCircle className="spin" size={16} />{' '}
+          {waiting ? t('scan.pending') : t('preview.loading')}
         </p>
       ) : mode === 'write' && editable ? (
         <textarea

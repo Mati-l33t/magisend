@@ -264,13 +264,18 @@ func clamdScan(ctx context.Context, address string, data io.Reader, size int64) 
 	defer stop()
 	var written int64
 	var local error // reading the file failed: tried again, never "too large"
+	// Storage that stalled long enough for clamd to give up waiting is not
+	// a file clamd refused.
+	var stalled bool
 	sent := func() error {
 		if _, e := conn.Write([]byte("zINSTREAM\x00")); e != nil {
 			return e
 		}
 		buf := make([]byte, 4+scanChunk)
 		for {
+			started := time.Now()
 			n, re := io.ReadFull(data, buf[4:])
+			stalled = stalled || time.Since(started) > 30*time.Second
 			if n > 0 {
 				binary.BigEndian.PutUint32(buf, uint32(n))
 				if _, e := conn.Write(buf[:4+n]); e != nil {
@@ -310,7 +315,7 @@ func clamdScan(ctx context.Context, address string, data io.Reader, size int64) 
 			signature = "unknown"
 		}
 		return signature, nil
-	case re != nil && written > scanChunk && cutOff(sent, re) && clamdAnswers(address):
+	case re != nil && written > scanChunk && !stalled && cutOff(sent, re) && clamdAnswers(address):
 		// clamd's answer to a stream past its limit can be lost when it
 		// closes the connection; it still answers, so the stream was
 		// refused, not lost.
@@ -384,7 +389,9 @@ func (a *App) scanNext(ctx context.Context) bool {
 	// When the result cannot be written, the worker stops until its next
 	// round instead of scanning the same file again at once.
 	record := func(state, signature string) bool {
-		e := exec(a, "UPDATE file_scans SET state=?,signature=?,scanned=? WHERE file_id=? AND blob=?", state, signature, time.Now().Unix(), id, blob)
+		// By the stored object alone: it may have become another file's
+		// version meanwhile (stored objects are never shared).
+		e := exec(a, "UPDATE file_scans SET state=?,signature=?,scanned=? WHERE blob=?", state, signature, time.Now().Unix(), blob)
 		if e != nil {
 			log.Printf("antivirus: the scan of file %s could not be saved: %v", id, e)
 		}
@@ -411,8 +418,16 @@ func (a *App) scanNext(ctx context.Context) bool {
 		if file != nil {
 			file.Close()
 		}
-		// The stored object is gone (replaced, or its storage is offline):
-		// tried again later.
+		// A stored object that is no longer one of the file's versions is not
+		// scanned at all.
+		var versions int
+		if blob != id && a.db.QueryRow("SELECT COUNT(*) FROM text_versions WHERE file_id=? AND blob=?", id, blob).Scan(&versions) == nil && versions == 0 {
+			more := exec(a, "DELETE FROM file_scans WHERE file_id=? AND blob=?", id, blob) == nil
+			a.mu.Unlock()
+			return more
+		}
+		// The stored object is gone (its storage is offline, say): tried
+		// again later.
 		more := a.retryScan(id, blob, tries, e)
 		a.mu.Unlock()
 		return more
@@ -463,7 +478,7 @@ func (a *App) retryScan(id, blob string, tries int, cause error) bool {
 	if wait > time.Hour {
 		wait = time.Hour
 	}
-	if e := exec(a, "UPDATE file_scans SET tries=tries+1,retry_at=? WHERE file_id=? AND blob=?", time.Now().Add(wait).Unix(), id, blob); e != nil {
+	if e := exec(a, "UPDATE file_scans SET tries=tries+1,retry_at=? WHERE blob=?", time.Now().Add(wait).Unix(), blob); e != nil {
 		log.Printf("antivirus: the retry of file %s could not be saved: %v", id, e)
 		return false
 	}
@@ -515,10 +530,11 @@ type clamavInfo struct {
 // clamdConfPath is the Debian and Ubuntu clamd configuration.
 var clamdConfPath = "/etc/clamav/clamd.conf"
 
-// clamdNeedsSettings reports whether the local clamd lacks the settings
-// the install gives it: files over its limits reported (AlertExceedsMax),
-// and files up to maxSize (at most 100 MB) scanned whole.
-func clamdNeedsSettings(maxSize int64) bool {
+// clamdNeedsSettings reports whether clamd on this server, when address
+// reaches it, lacks the settings the install gives it: files over its limits
+// reported (AlertExceedsMax), and files up to maxSize (at most 100 MB)
+// scanned whole.
+func clamdNeedsSettings(address string, maxSize int64) bool {
 	data, e := os.ReadFile(clamdConfPath)
 	if e != nil || len(data) > 1<<20 {
 		return false
@@ -526,19 +542,34 @@ func clamdNeedsSettings(maxSize int64) bool {
 	values := map[string]string{}
 	for _, line := range strings.Split(string(data), "\n") {
 		if f := strings.Fields(line); len(f) >= 2 && !strings.HasPrefix(f[0], "#") {
-			values[f[0]] = strings.ToLower(f[1])
+			values[f[0]] = f[1]
 		}
 	}
-	if alert := values["AlertExceedsMax"]; alert != "true" && alert != "yes" {
+	if !localClamd(address, values) {
+		return false
+	}
+	if alert := strings.ToLower(values["AlertExceedsMax"]); alert != "true" && alert != "yes" {
 		return true
 	}
 	want := min(maxSize, defaultScanMaxSize)
-	for _, key := range []string{"MaxFileSize", "StreamMaxLength"} {
-		if n, ok := clamdSize(values[key]); ok && n > 0 && n < want {
+	for _, key := range []string{"MaxFileSize", "StreamMaxLength", "PCREMaxFileSize"} {
+		if n, ok := clamdSize(strings.ToLower(values[key])); ok && n > 0 && n < want {
 			return true
 		}
 	}
 	return false
+}
+
+// localClamd reports whether address is where this server's clamd, as its
+// configuration says, listens.
+func localClamd(address string, values map[string]string) bool {
+	if path, ok := strings.CutPrefix(address, "unix:"); ok {
+		path = strings.TrimPrefix(path, "/var")
+		socket := strings.TrimPrefix(values["LocalSocket"], "/var")
+		return path == strings.TrimPrefix(defaultClamdAddress, "unix:") || socket != "" && path == socket
+	}
+	host, port, e := net.SplitHostPort(address)
+	return e == nil && (host == "127.0.0.1" || host == "localhost" || host == "::1") && port != "" && port == values["TCPSocket"]
 }
 
 // clamdSize reads a clamd size such as 25M, 1G, 4000K or 1048576.
@@ -612,8 +643,8 @@ func (a *App) clamavInfo(ctx context.Context, s ScanSettings) clamavInfo {
 		info.CanInstall = a.updates.Updater && updaterInstallsClamAV()
 		info.Memory = memoryMB()
 		// Only ClamAV on this server can be checked.
-		if info.Running && clamdAddress(s) == defaultClamdAddress {
-			info.NeedsSettings = clamdNeedsSettings(s.MaxSize)
+		if info.Running {
+			info.NeedsSettings = clamdNeedsSettings(clamdAddress(s), s.MaxSize)
 		}
 	}
 	if stat, e := os.Stat(filepath.Join(a.root, clamavTrigger)); e == nil {
@@ -715,7 +746,11 @@ func (a *App) antivirusRoutes(m *http.ServeMux) {
 			fail(w, 409, "antivirus_cannot_install")
 			return
 		}
-		if memory := memoryMB(); memory > 0 && memory < clamavMemory {
+		// Repairing ClamAV that already runs needs no more memory than it has.
+		check, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		_, running := clamdVersion(check, clamdAddress(a.scanSettings()))
+		cancel()
+		if memory := memoryMB(); running != nil && memory > 0 && memory < clamavMemory {
 			fail(w, 409, "antivirus_memory")
 			return
 		}

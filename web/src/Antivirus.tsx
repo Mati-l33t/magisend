@@ -95,6 +95,10 @@ export function AntivirusPanel() {
   const waiting = !!state?.counts.pending && state.settings.mode !== 'off';
   const installing =
     !!state?.clamav && (!!state.clamav.requested || state.clamav.progress?.state === 'running');
+  // The note that the install started goes once it is over.
+  useEffect(() => {
+    if (!installing) setNote('');
+  }, [installing]);
   useFollow(
     waiting || installing,
     load,
@@ -305,6 +309,11 @@ function ClamavStatus({
             <p>
               <ShieldAlert size={16} /> {t('antivirus.needsSettings')}
             </p>
+            {progress?.state === 'failed' && (
+              <p className="error">
+                {t('antivirus.installFailed', { reason: stepText(progress) })}
+              </p>
+            )}
             {clamav.can_install ? (
               <button type="button" className="secondary" disabled={busy} onClick={install}>
                 <Download size={16} />

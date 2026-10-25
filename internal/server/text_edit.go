@@ -102,6 +102,11 @@ func (a *App) readText(f File) ([]byte, bool) {
 func (a *App) textState(w http.ResponseWriter, f File) ([]byte, int, bool) {
 	data, ok := a.readText(f)
 	if !ok {
+		// Contents held back by their scan say so, not that they are no text.
+		if held := a.scanHeld(f.ID); held != "" {
+			failHeld(w, held)
+			return nil, 0, false
+		}
 		respond(w, 415, map[string]string{"error": "Unsupported or unsafe text file", "error_code": "text_unsupported"})
 		return nil, 0, false
 	}
@@ -157,8 +162,15 @@ func (a *App) storeText(w http.ResponseWriter, f File, user string, current int,
 	}
 	if mayMerge && current > 1 && a.db.QueryRow("SELECT actor,created,blob FROM text_versions WHERE file_id=? AND number=?", f.ID, current).Scan(&newestActor, &newestAt, &replacedBlob) == nil &&
 		newestActor == user && time.Since(time.Unix(newestAt, 0)) < textMergeWindow && replacedBlob != f.ID && validToken(replacedBlob) {
-		replaced = replacedBlob
-		count--
+		// A version in which a virus was found stays in the history.
+		var infected int
+		if internal(w, a.db.QueryRow("SELECT COUNT(*) FROM file_scans WHERE blob=? AND state='infected'", replacedBlob).Scan(&infected)) {
+			return fail()
+		}
+		if infected == 0 {
+			replaced = replacedBlob
+			count--
+		}
 	}
 	store, ok := a.versionRoom(w, f, int64(len(data)), count)
 	if !ok {
@@ -209,6 +221,10 @@ func (a *App) storeText(w http.ResponseWriter, f File, user string, current int,
 	}
 	if replaced != "" {
 		if _, e = tx.Exec("DELETE FROM text_versions WHERE file_id=? AND number=?", f.ID, current); internal(w, e) {
+			return fail()
+		}
+		// Its scan, waiting or done, goes with it.
+		if _, e = tx.Exec("DELETE FROM file_scans WHERE blob=?", replaced); internal(w, e) {
 			return fail()
 		}
 	}

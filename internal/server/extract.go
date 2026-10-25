@@ -169,8 +169,8 @@ func tarItems(ctx context.Context, archive io.ReaderAt, size int64, format strin
 var errTooManyInArchive = errors.New("too many entries in the archive")
 
 // tarName is an entry's name as kept, or false when it is too long. A name
-// that is not UTF-8 is from an old archive and read as Latin-1, as old tar
-// files on Windows and Linux mostly were.
+// that is not UTF-8 is from an old archive and read as Windows-1252 (Latin-1
+// with typographic signs in 0x80–0x9F), as old tar files mostly were.
 func tarName(name string) (string, bool) {
 	if len(name) > tarNameLimit {
 		return "", false
@@ -181,8 +181,18 @@ func tarName(name string) (string, bool) {
 	runes := make([]rune, len(name))
 	for i := 0; i < len(name); i++ {
 		runes[i] = rune(name[i])
+		if b := name[i]; b >= 0x80 && b <= 0x9f {
+			runes[i] = cp1252[b-0x80]
+		}
 	}
 	return string(runes), true
+}
+
+// cp1252 holds Windows-1252's signs for 0x80–0x9F; the five it leaves
+// undefined become "_".
+var cp1252 = [32]rune{
+	'€', '_', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '_', 'Ž', '_',
+	'_', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '_', 'ž', 'Ÿ',
 }
 
 // archivePlan picks what to unpack from an archive's contents. Folders,
