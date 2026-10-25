@@ -83,6 +83,36 @@ const rasterTypes = new Set([
 function unsupported() {
   return new LocalizedError(message('errors.preview_unsupported'));
 }
+// An SVG is shown as a PNG drawn from it. Drawn as a picture its scripts
+// never run, and the PNG keeps it that way even when the shown picture is
+// opened on its own (in a new tab, say), where an SVG would be a page.
+async function svgAsPNG(blob: Blob): Promise<Blob> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const width = image.naturalWidth || 1024;
+    const height = image.naturalHeight || 1024;
+    const scale = Math.min(
+      4096 / Math.max(width, height),
+      Math.max(1, 1024 / Math.max(width, height)),
+    );
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw unsupported();
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((png) => (png ? resolve(png) : reject(unsupported())), 'image/png'),
+    );
+  } catch {
+    throw unsupported();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 async function previewBlob(response: Response, type: string) {
   const limit = type.startsWith('image/') ? maxImageBytes : maxBytes;
   const length = response.headers.get('Content-Length');
@@ -274,6 +304,10 @@ export default function FilePreview({
         if (!active || controller.signal.aborted) return;
         if (isHeif(type) && !(await browserDraws(blob))) {
           blob = await heifToJPEG(blob);
+          if (!active || controller.signal.aborted) return;
+        }
+        if (type === 'image/svg+xml') {
+          blob = await svgAsPNG(blob);
           if (!active || controller.signal.aborted) return;
         }
         if (textual) {

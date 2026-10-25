@@ -174,8 +174,21 @@ test('custom link, description and inline thumbnails work for owner and visitor'
   );
   if (picture.status() === 200)
     expect(picture.headers()['content-type']).toMatch(/^image\/(png|jpeg)$/);
+  // The SVG itself is shown only as a PNG drawn from it.
   await visitor.getByRole('button', { name: 'unsafe.svg', exact: true }).click();
-  await expect(visitor.getByRole('dialog').getByText(/kan inte förhandsvisas/i)).toBeVisible();
+  const shown = visitor.getByRole('dialog').getByRole('img');
+  await expect(shown).toBeVisible();
+  // Opened on its own, as "Open image in new tab" does, it is a PNG.
+  const [opened] = await Promise.all([
+    visitor.waitForEvent('popup'),
+    shown.evaluate((element) => window.open((element as HTMLImageElement).src)),
+  ]);
+  await opened.waitForLoadState();
+  expect(await opened.evaluate(() => document.contentType)).toBe('image/png');
+  expect(await opened.evaluate(() => Object.hasOwn(window, '__MAGISEND_PREVIEW_EXECUTED__'))).toBe(
+    false,
+  );
+  await opened.close();
   expect(await visitor.evaluate(() => Object.hasOwn(window, '__MAGISEND_PREVIEW_EXECUTED__'))).toBe(
     false,
   );

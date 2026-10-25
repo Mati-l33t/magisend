@@ -108,13 +108,23 @@ test('permanent image share has owner/public previews and a safe fallback', asyn
     fullPage: true,
   });
   await publicDialog.getByRole('button', { name: 'Stäng', exact: true }).click();
+  // An SVG is shown as a PNG drawn from it, so its script runs nowhere, not
+  // even when the shown picture is opened on its own.
   await publicPage.getByRole('button', { name: 'unsafe.svg', exact: true }).click();
   const fallback = publicPage.getByRole('dialog');
-  await expect(
-    fallback.getByText(/stöds inte|kan inte förhandsvisas|ingen förhandsvisning/i),
-  ).toBeVisible();
+  await expect(fallback.getByRole('img')).toBeVisible();
+  // Opened on its own, as "Open image in new tab" does, it is a PNG.
+  const [opened] = await Promise.all([
+    publicPage.waitForEvent('popup'),
+    fallback.getByRole('img').evaluate((element) => window.open((element as HTMLImageElement).src)),
+  ]);
+  await opened.waitForLoadState();
+  expect(await opened.evaluate(() => document.contentType)).toBe('image/png');
+  expect(await opened.evaluate(() => Object.hasOwn(window, '__MAGISEND_PREVIEW_EXECUTED__'))).toBe(
+    false,
+  );
+  await opened.close();
   await expect(fallback.getByRole('link', { name: /ladda ner/i })).toBeVisible();
-  await expect(fallback.getByRole('img')).toHaveCount(0);
   await expect(publicPage.locator('iframe,object,embed')).toHaveCount(0);
   expect(
     await publicPage.evaluate(() => Object.hasOwn(window, '__MAGISEND_PREVIEW_EXECUTED__')),
