@@ -2,7 +2,9 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
-## Unreleased
+## 1.0.10
+
+ClamAV can be installed and repaired from the admin page, and virus scanning now covers edited text, notes and unpacked files. Includes the fixes from five reviews of this work.
 
 - **Virus scanning:** Administration → Virus scanning shows whether ClamAV runs and, on an installation made with the installer, installs it with one button (through the updater, which runs as root; it takes a few minutes and needs about 1.5 GB of memory). With Docker it explains the compose change instead. The ClamAV address is now under an advanced section, as it is only needed when ClamAV runs elsewhere.
 - **Proxmox installer:** Advanced settings can add ClamAV, which gives the container at least 2560 MB of memory.
