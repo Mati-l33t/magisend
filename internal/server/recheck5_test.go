@@ -207,4 +207,14 @@ func TestOlderEncodingIsEditable(t *testing.T) {
 	if data, _ := os.ReadFile(filepath.Join(a.root, "blobs", blob)); string(data) != "L\xf6senord" {
 		t.Fatal("the original is not kept", data)
 	}
+	// The original can be restored from the editor's history, as its text.
+	var versions int
+	a.db.QueryRow("SELECT MAX(number) FROM text_versions WHERE file_id=?", id).Scan(&versions)
+	body, _ = json.Marshal(map[string]any{"version": versions, "restore": 1})
+	if w = call(a, "POST", "/api/library/files/"+id+"/restore", string(body), token); w.Code != 200 {
+		t.Fatal("restoring the original", w.Code, w.Body)
+	}
+	if w = call(a, "GET", "/api/library/files/"+id+"/download", "", token); w.Body.String() != "Lösenord" {
+		t.Fatalf("restored %d %q", w.Code, w.Body.String())
+	}
 }

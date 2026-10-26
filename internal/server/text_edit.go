@@ -470,6 +470,12 @@ func (a *App) serveText(w http.ResponseWriter, r *http.Request, f File, user str
 		if internal(w, e) {
 			return
 		}
+		// An original in an older encoding comes back as the text it shows.
+		var ok bool
+		if data, ok = readableText(data); !ok {
+			textUnsupported(w)
+			return
+		}
 	} else {
 		data = []byte(b.Text)
 	}

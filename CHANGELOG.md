@@ -2,7 +2,7 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
-## Unreleased
+## 1.0.11
 
 - **Text files in older encodings:** text saved by older Windows programs (Windows-1252, with å, ä and ö as single bytes) and UTF-16 text now open in the viewer instead of "cannot be previewed safely", and can be edited: a save stores the text as UTF-8 in a new version, and the original stays in the file's history.
 - **Copy buttons** show a check and "Copied" for a moment (or say that copying failed) everywhere: My shares, sent and library links, upload requests, API tokens and two-factor codes. The copy button in My shares now copies the link at once; the QR button still opens the link window.
