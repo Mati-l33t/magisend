@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -175,5 +177,34 @@ func TestLibraryMarksSharedFiles(t *testing.T) {
 	a.db.Exec("UPDATE shares SET expires=1 WHERE id=?", sent.ID)
 	if got = shared(); got["kept.txt"] != 0 {
 		t.Fatal("an expired link still marks its file", got)
+	}
+}
+
+// Text in an older encoding opens in the editor as UTF-8; a save stores UTF-8
+// and the original bytes stay in the history.
+func TestOlderEncodingIsEditable(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	id := libraryUpload(t, a, token, "", "Verket.txt", "L\xf6senord").Files[0].ID
+	var state struct {
+		Text    string `json:"text"`
+		Version int    `json:"version"`
+	}
+	w := call(a, "GET", "/api/library/files/"+id+"/text", "", token)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &state) != nil || state.Text != "Lösenord" {
+		t.Fatal(w.Code, w.Body)
+	}
+	body, _ := json.Marshal(map[string]any{"version": state.Version, "text": "Lösenord ändrat"})
+	if w = call(a, "PUT", "/api/library/files/"+id+"/text", string(body), token); w.Code != 200 {
+		t.Fatal(w.Code, w.Body)
+	}
+	if w = call(a, "GET", "/api/library/files/"+id+"/download", "", token); w.Body.String() != "Lösenord ändrat" {
+		t.Fatal("not saved as UTF-8", w.Body)
+	}
+	var blob string
+	a.db.QueryRow("SELECT blob FROM text_versions WHERE file_id=? AND number=1", id).Scan(&blob)
+	if data, _ := os.ReadFile(filepath.Join(a.root, "blobs", blob)); string(data) != "L\xf6senord" {
+		t.Fatal("the original is not kept", data)
 	}
 }

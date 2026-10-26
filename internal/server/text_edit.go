@@ -97,7 +97,14 @@ func (a *App) readText(f File) ([]byte, bool) {
 		return nil, false
 	}
 	data, e := io.ReadAll(io.LimitReader(file, textMaxBytes+1))
-	return data, e == nil && int64(len(data)) == f.Size && safeText(f.Name, data)
+	if e != nil || int64(len(data)) != f.Size {
+		return nil, false
+	}
+	// Text in an older encoding is edited as UTF-8, as the viewer shows it;
+	// a save stores UTF-8 as a new version and the original stays in the
+	// history.
+	text, ok := readableText(data)
+	return text, ok && safeText(f.Name, text)
 }
 func (a *App) textState(w http.ResponseWriter, f File) ([]byte, int, bool) {
 	data, ok := a.readText(f)

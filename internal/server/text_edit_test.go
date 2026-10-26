@@ -46,7 +46,7 @@ func TestTextVersionsSafetyConflictAndRestore(t *testing.T) {
 	for _, bad := range []string{"binary\x00data", strings.Repeat("x", textMaxBytes+1)} {
 		folderCall(t, a, token, "PUT", path, textBody(3, bad), 415)
 	}
-	for _, tc := range []struct{ name, data string }{{"document.pdf", "%PDF-1.7"}, {"bad.txt", "bad\x00bytes"}, {"page.html", "<script>alert(1)</script>"}, {"invalid.txt", string([]byte{255, 254})}} {
+	for _, tc := range []struct{ name, data string }{{"document.pdf", "%PDF-1.7"}, {"bad.txt", "bad\x00bytes"}, {"page.html", "<script>alert(1)</script>"}, {"invalid.txt", string([]byte{255, 1, 2})}} {
 		f := libraryUpload(t, a, token, "", tc.name, tc.data).Files[0].ID
 		folderCall(t, a, token, "GET", "/api/library/files/"+f+"/text", "", 415)
 		if tc.name == "document.pdf" {
