@@ -135,7 +135,13 @@ unexpected() { # line, or "signal"
 [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
 [ -f "$APP_DIR/.magisend-release" ] || { echo "$APP_DIR is not a MagiSend release installation" >&2; exit 1; }
 exec 9> /run/magisend-update.lock
-flock -n 9 || { echo "another update is running" >&2; exit 0; }
+# Another run already updates; an install of ClamAV asked for here did not
+# happen, which its caller is told.
+flock -n 9 || {
+  echo "another update is running" >&2
+  if [ "${1:-}" = --clamav ]; then exit 1; fi
+  exit 0
+}
 
 # The working folder must be a real folder owned by root.
 if [ -L "$STATE" ] || { [ -e "$STATE" ] && [ ! -d "$STATE" ]; }; then
@@ -167,8 +173,20 @@ clamd_set() { # key value: sets one clamd.conf setting
     echo "$1 $2" >> "$conf"
   fi
 }
+# Whether clamd answers PING on its socket, which it does once its virus
+# database is loaded. perl-base is part of every Debian and Ubuntu system.
+clamd_ping() {
+  perl -MIO::Socket::UNIX -e '
+    $SIG{ALRM} = sub { exit 1 };
+    alarm 10;
+    my $s = IO::Socket::UNIX->new(Peer => $ARGV[0]) or exit 1;
+    print $s "zPING\0";
+    local $/ = "\0";
+    my $answer = <$s>;
+    exit(defined $answer && $answer =~ /^PONG/ ? 0 : 1);' /run/clamav/clamd.ctl 2> /dev/null
+}
 install_clamav() {
-  local memory installed package started
+  local memory installed package started until
   trap 'clamav_status failed stopped "The ClamAV installation stopped"; exit 1' ERR TERM INT HUP
   # Said first, so the admin page sees the work going on.
   clamav_status running settings "Preparing ClamAV"
@@ -211,35 +229,42 @@ install_clamav() {
   systemctl enable clamav-daemon > /dev/null 2>&1 || true
   systemctl restart clamav-daemon > /dev/null 2>&1 || true
   # The socket can exist before clamd answers (systemd may hold it), so it
-  # counts once the daemon itself has run for a few seconds as well.
+  # counts once clamd itself answers, and still does a few seconds later.
   started=0
-  for _ in $(seq 1 90); do
-    if [ -S /run/clamav/clamd.ctl ] && systemctl is-active --quiet clamav-daemon; then
+  until=$((SECONDS + 240))
+  while [ "$SECONDS" -lt "$until" ]; do
+    if clamd_ping; then
       sleep 5
-      systemctl is-active --quiet clamav-daemon && started=1
+      systemctl is-active --quiet clamav-daemon && clamd_ping && started=1
       break
     fi
-    sleep 2
+    sleep 3
   done
   [ "$started" = 1 ] || { clamav_status failed start "ClamAV did not start; see: journalctl -u clamav-daemon"; exit 1; }
   clamav_status success installed "ClamAV is installed and running"
   exit 0
 }
 # The admin page's request counts once, while it is recent, and only when
-# magisend-update.service started this run (systemd sets INVOCATION_ID), so
-# an update run by hand is never turned into it. It installs or repairs
+# magisend-update.service started this run (its INVOCATION_ID, not one a
+# shell inherited from another unit), so an update run by hand is never
+# turned into it. It installs or repairs
 # ClamAV and its settings, and does not update MagiSend.
 REQUEST="$DATA/.clamav-requested"
 CLAMAV=0
 [ "${1:-}" = --clamav ] && CLAMAV=1
-if [ -n "${INVOCATION_ID:-}" ]; then
+SERVICE=0
+if [ -n "${INVOCATION_ID:-}" ] &&
+  [ "$INVOCATION_ID" = "$(systemctl show -p InvocationID --value magisend-update.service 2> /dev/null)" ]; then
+  SERVICE=1
+fi
+if [ "$SERVICE" = 1 ]; then
   if [ -f "$REQUEST" ] && [ ! -L "$REQUEST" ] && [ -n "$(find "$REQUEST" -maxdepth 0 -mmin -20 2> /dev/null)" ]; then
     CLAMAV=1
   fi
 fi
 # A run by hand leaves the request for the service, unless it installs
 # ClamAV itself.
-if [ -n "${INVOCATION_ID:-}" ] || [ "$CLAMAV" = 1 ]; then
+if [ "$SERVICE" = 1 ] || [ "$CLAMAV" = 1 ]; then
   rm -f -- "$REQUEST" 2> /dev/null || true
 fi
 if [ "$CLAMAV" = 1 ]; then

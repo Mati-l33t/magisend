@@ -211,7 +211,9 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
   const [updateInfo] = useUpdateInfo(me.user.role === 'admin');
   const [preview, setPreview] = useState<{ shareId: string; file: SharedFile } | null>(null);
   const total = files.reduce((n, f) => n + f.size, 0);
-  async function list() {
+  // In the background (following scans), a failure is not shown: the next
+  // turn tries again.
+  async function list(background = false) {
     try {
       const all = await api<Share[]>('/api/shares');
       setShares(all);
@@ -226,7 +228,7 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
         else setError(message('share.extendGone'));
       }
     } catch (e) {
-      setError(e as Error);
+      if (!background) setError(e as Error);
     }
   }
   useEffect(() => {
@@ -248,7 +250,7 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
     .filter((f) => f.scan === 'pending')
     .map((f) => f.id)
     .join(',');
-  useFollow(!!waitingIds && (tab === 'shares' || !!result), list, waitingIds);
+  useFollow(!!waitingIds && (tab === 'shares' || !!result), () => list(true), waitingIds);
   function select(incoming: File[]) {
     if (busy) return;
     setError('');
@@ -1333,6 +1335,8 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
 function ReadyImage({ shareId, file }: { shareId: string; file: SharedFile }) {
   const [source, setSource] = useState('');
   useEffect(() => {
+    // Asked for once its scan is done.
+    if (file.scan) return;
     const controller = new AbortController();
     let url = '';
     fetch(
@@ -1363,7 +1367,7 @@ function ReadyImage({ shareId, file }: { shareId: string; file: SharedFile }) {
       controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [shareId, file.id]);
+  }, [shareId, file.id, file.scan]);
   return (
     <div className="ready-image">
       <span>

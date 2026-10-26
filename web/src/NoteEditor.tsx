@@ -48,13 +48,7 @@ export default function NoteEditor({
   // The note waits for its virus scan: read again once it is done.
   const [waiting, setWaiting] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [status, setStatusState] = useState<'saved' | 'saving' | 'unsaved' | 'conflict'>('saved');
-  // The latest status, for finish() after a save it waited for.
-  const statusRef = useRef(status);
-  const setStatus = (next: typeof status) => {
-    statusRef.current = next;
-    setStatusState(next);
-  };
+  const [status, setStatus] = useState<'saved' | 'saving' | 'unsaved' | 'conflict'>('saved');
   const [error, setError] = useMessage();
   // The latest values, for saves that run after a render.
   const latest = useRef({ id, title, text, version: 0, dirty: false });
@@ -79,8 +73,12 @@ export default function NoteEditor({
       setWaiting(false);
       setLoading(false);
     } catch (e) {
-      // Waiting for its scan, or the network was away: tried again.
-      if ((e instanceof ApiError && e.status === 423) || !(e instanceof ApiError)) {
+      // Waiting for its scan, the network was away or the server is
+      // restarting: tried again. Anything else is said.
+      if (
+        e instanceof TypeError ||
+        (e instanceof ApiError && (e.status === 423 || e.status >= 500))
+      ) {
         setScanning(e instanceof ApiError);
         setWaiting(true);
         return;
@@ -93,7 +91,11 @@ export default function NoteEditor({
   useEffect(() => {
     void loadText();
   }, []);
-  useFollow(waiting, loadText);
+  // Still waiting after half an hour: said, instead of waiting on.
+  useFollow(waiting, loadText, '', () => {
+    setWaiting(false);
+    setError(t('notes.notReady'));
+  });
 
   async function save() {
     if (saving.current) await saving.current;
@@ -140,7 +142,8 @@ export default function NoteEditor({
         changed();
       } catch (e) {
         current.dirty = true;
-        if (e instanceof ApiError && e.status === 409) setStatus('conflict');
+        // Only an edit made elsewhere is a conflict; a full folder is not.
+        if (e instanceof ApiError && e.code === 'text_conflict') setStatus('conflict');
         else setStatus('unsaved');
         setError(e as Error);
       } finally {
@@ -167,8 +170,9 @@ export default function NoteEditor({
       return;
     }
     await save();
-    // A conflict cannot be saved: it was said, so closing is not refused.
-    if (latest.current.dirty && statusRef.current !== 'conflict') return;
+    // Text that could not be saved, after a conflict or in a full folder, is
+    // only given up when the user says so.
+    if (latest.current.dirty && !window.confirm(t('notes.closeUnsaved'))) return;
     close();
   }
   function addChecklist() {
@@ -284,7 +288,7 @@ export default function NoteEditor({
           {error}
         </div>
       )}
-      {loading ? (
+      {loading && error ? null : loading ? (
         <p role="status" className="muted">
           <LoaderCircle className="spin" size={16} />{' '}
           {scanning ? t('scan.pending') : t('preview.loading')}

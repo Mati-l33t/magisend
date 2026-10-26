@@ -302,5 +302,9 @@
   "replace_edited": [
     "That file was edited and has versions of its own; choose a file that was not edited as the new version.",
     "Den filen har redigerats och har egna versioner; välj en fil som inte har redigerats som ny version."
+  ],
+  "thumbnail_busy": [
+    "The server is busy making thumbnails; try again shortly",
+    "Servern är upptagen med miniatyrbilder; försök igen strax"
   ]
 }

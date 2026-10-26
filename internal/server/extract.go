@@ -72,7 +72,7 @@ func zipItems(reader *zip.Reader) []archiveItem {
 	items := make([]archiveItem, 0, len(reader.File))
 	for _, f := range reader.File {
 		dir := f.FileInfo().IsDir() || strings.HasSuffix(strings.ReplaceAll(f.Name, "\\", "/"), "/")
-		items = append(items, archiveItem{name: f.Name, size: int64(f.UncompressedSize64), dir: dir, usable: f.Flags&1 == 0 && f.UncompressedSize64 <= 1<<62, zip: f})
+		items = append(items, archiveItem{name: zipName(f.Name), size: int64(f.UncompressedSize64), dir: dir, usable: f.Flags&1 == 0 && f.UncompressedSize64 <= 1<<62, zip: f})
 	}
 	return items
 }
@@ -208,6 +208,37 @@ func tarName(name string) (string, bool) {
 		}
 	}
 	return b.String(), true
+}
+
+// zipName is an entry's name as kept. A name that is not UTF-8 is from an
+// archive made before zip knew UTF-8, which then used code page 437 (the old
+// DOS characters); a UTF-8 name is kept as tarName keeps one.
+func zipName(name string) string {
+	if utf8.ValidString(name) {
+		kept, _ := tarName(name)
+		return kept
+	}
+	var b strings.Builder
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; c >= 0x80 {
+			b.WriteRune(cp437[c-0x80])
+		} else {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// cp437 holds code page 437's characters for 0x80–0xFF.
+var cp437 = [128]rune{
+	'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å',
+	'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ',
+	'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»',
+	'░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐',
+	'└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧',
+	'╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐', '▀',
+	'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩',
+	'≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', ' ',
 }
 
 // cp1252 holds Windows-1252's signs for 0x80–0x9F; 0 marks the five it

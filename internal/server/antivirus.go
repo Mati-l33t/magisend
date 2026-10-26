@@ -471,10 +471,11 @@ func (a *App) scanNext(ctx context.Context) bool {
 		if !record(scanInfected, signature) {
 			return false
 		}
+		a.scanState.Store(scanStatus{})
 		if gone {
+			log.Printf("antivirus: %s found in a version of file %s that is gone", signature, id)
 			return true
 		}
-		a.scanState.Store(scanStatus{})
 		log.Printf("antivirus: %s found in file %s", signature, id)
 		a.audit(nil, a.username(owner), "file.infected", name+" ("+signature+")")
 		a.notify(owner, pushInfected, func(t map[string]string) (string, string) {
@@ -521,15 +522,22 @@ type clamavInstall struct {
 	Step    string `json:"step,omitempty"`
 	Message string `json:"message"`
 	Time    string `json:"time"`
+	// Within the last day by this server's clock: older failures are not
+	// shown next to a running ClamAV.
+	Recent bool `json:"recent,omitempty"`
 }
 
 // clamavMemory is the memory (MB) ClamAV is installed with: about 1.5 GB for
 // clamd itself, and MagiSend's own share.
 const clamavMemory = 2400
 
-// clamavStale is how long an install request or a running install is waited
+// clamavStale is how long an install request is waited
 // for; after that the admin page offers the button again.
 const clamavStale = 20 * time.Minute
+
+// clamavRunLimit is how long an install may run: TimeoutStartSec in
+// magisend-update.service. One still said to run after that has stopped.
+const clamavRunLimit = 30 * time.Minute
 
 type clamavInfo struct {
 	Running bool   `json:"running"`
@@ -671,10 +679,12 @@ func (a *App) clamavInfo(ctx context.Context, s ScanSettings) clamavInfo {
 	if data, e := os.ReadFile(clamavStatusPath); e == nil && len(data) < 4096 {
 		var progress clamavInstall
 		if json.Unmarshal(data, &progress) == nil {
+			at, e := time.Parse(time.RFC3339, progress.Time)
 			// An install that stopped without saying so counts as failed.
-			if at, e := time.Parse(time.RFC3339, progress.Time); progress.State == "running" && (e != nil || time.Since(at) > clamavStale) {
+			if progress.State == "running" && (e != nil || time.Since(at) > clamavRunLimit) {
 				progress.State, progress.Step, progress.Message = "failed", "stopped", "The ClamAV installation stopped"
 			}
+			progress.Recent = e == nil && time.Since(at) < 24*time.Hour
 			info.Progress = &progress
 		}
 	}

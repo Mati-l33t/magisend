@@ -259,14 +259,13 @@ func (a *App) putThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// At most thumbUploadMaxEdge on each side, so small to decode, but only
-	// a few at once all the same; others wait while their request lasts.
-	select {
-	case a.thumbUploads <- struct{}{}:
-	case <-r.Context().Done():
+	// a few at once all the same; others wait a moment, then are told to
+	// come back, so a queue never holds requests open.
+	if !a.thumbUploadTurn(r) {
+		fail(w, 503, "thumbnail_busy")
 		return
 	}
-	source, ok := decodeRaster(data)
-	<-a.thumbUploads
+	source, ok := a.decodeUploadedThumb(data)
 	if !ok {
 		fail(w, 400, "thumbnail_unavailable")
 		return
@@ -280,6 +279,29 @@ func (a *App) putThumbnail(w http.ResponseWriter, r *http.Request) {
 	}
 	a.thumbBlocked.Delete(file.ID)
 	w.WriteHeader(204)
+}
+
+// thumbUploadWait is how long an uploaded thumbnail waits for its turn.
+var thumbUploadWait = 5 * time.Second
+
+func (a *App) thumbUploadTurn(r *http.Request) bool {
+	wait := time.NewTimer(thumbUploadWait)
+	defer wait.Stop()
+	select {
+	case a.thumbUploads <- struct{}{}:
+		return true
+	case <-wait.C:
+		return false
+	case <-r.Context().Done():
+		return false
+	}
+}
+
+// decodeUploadedThumb decodes in the turn thumbUploadTurn took, and gives it
+// back however the decoding ends.
+func (a *App) decodeUploadedThumb(data []byte) (image.Image, bool) {
+	defer func() { <-a.thumbUploads }()
+	return decodeRaster(data)
 }
 
 // Nearest-neighbour is deliberate: thumbnails are decorative 256 px previews, so

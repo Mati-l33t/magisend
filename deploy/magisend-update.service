@@ -10,4 +10,4 @@ Type=oneshot
 User=root
 ExecStartPre=/bin/rm -f /var/lib/magisend/.update-requested
 ExecStart=/opt/magisend/update.sh
-TimeoutStartSec=15min
+TimeoutStartSec=30min

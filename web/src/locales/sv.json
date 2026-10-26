@@ -1213,5 +1213,8 @@
   "antivirus.applySettings": "Använd rekommenderade inställningar",
   "errors.replace_edited": "Den filen har redigerats och har egna versioner; välj en fil som inte har redigerats som ny version.",
   "antivirus.stepSettings": "Förbereder ClamAV",
-  "antivirus.settingsFailed": "De rekommenderade inställningarna tillämpades inte: {reason}"
+  "antivirus.settingsFailed": "De rekommenderade inställningarna tillämpades inte: {reason}",
+  "notes.closeUnsaved": "Din text är inte sparad. Stäng ändå och förlora den? Kopiera den först om det behövs.",
+  "notes.notReady": "Anteckningen kunde inte öppnas ännu. Stäng den och försök igen senare.",
+  "errors.thumbnail_busy": "Servern är upptagen med miniatyrbilder; försök igen strax"
 }

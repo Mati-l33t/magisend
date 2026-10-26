@@ -47,7 +47,8 @@ function fileUrl(source: { shareId: string; fileId: string }, part = '') {
   );
 }
 
-// The file is held back by its virus scan: tried again once it is done.
+// The file is held back by its virus scan, or the server is too busy to take
+// the picture now: tried again later, not given up on.
 class HeldBack extends Error {}
 
 // Whether a refused read was the virus scan's doing.
@@ -246,6 +247,7 @@ async function make(shareId: string, fileId: string, name: string, local?: File)
       headers: { 'X-MagiSend': '1', 'Content-Type': 'image/png' },
       body: png,
     });
+    if (response.status === 503) throw new HeldBack('busy');
     if (!response.ok) throw new Error('refused');
     return true;
   } catch (e) {

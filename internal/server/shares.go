@@ -497,6 +497,11 @@ func (a *App) shareRoutes(m *http.ServeMux) {
 		a.queueScans(s.ID, false)
 		a.queueThumbnails(s.ID)
 		s.Published = true
+		// Read before the scans were queued: the page shown next follows them.
+		held := a.heldScans()
+		for i := range s.Files {
+			s.Files[i].Scan = held[s.Files[i].ID]
+		}
 		if !a.isLibraryContainer(s.ID) {
 			if u, e := a.currentUser(r); e == nil {
 				a.audit(r, u.Username, "share.created", s.Title)

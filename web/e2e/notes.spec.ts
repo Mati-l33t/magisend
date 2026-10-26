@@ -72,4 +72,40 @@ test('notes are written, titled, ticked off and shared', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Weekly shop');
   await expect(page.locator('.public-note [data-task-line="1"]')).toBeChecked();
   await expect(page.locator('.public-note [data-task-line="1"]')).toBeDisabled();
+
+  // Changed elsewhere meanwhile: closing with unsaved text asks first, and
+  // the editor stays when the answer is no.
+  await page.goto('/library/notes');
+  await shop.locator('.note-open').click();
+  await editor.getByRole('radio', { name: 'Write' }).check();
+  const state = await (
+    await page.request.get('/api/library/files/' + notes[0].id + '/text', { headers })
+  ).json();
+  expect(
+    (
+      await page.request.put('/api/library/notes/' + notes[0].id, {
+        data: {
+          version: state.version,
+          title: 'Weekly shop',
+          text: 'from elsewhere',
+          language: 'en',
+        },
+        headers,
+      })
+    ).status(),
+  ).toBe(200);
+  await editor.getByLabel('Note', { exact: true }).fill('written here');
+  const asked: string[] = [];
+  page.once('dialog', (dialog) => {
+    asked.push(dialog.message());
+    void dialog.dismiss();
+  });
+  await editor.getByRole('button', { name: 'Close' }).click();
+  await expect(editor.getByRole('status')).toHaveText(/Changed somewhere else/);
+  expect(asked).toEqual([expect.stringMatching(/not saved/)]);
+  await expect(editor).toHaveCount(1);
+  await expect(editor.getByLabel('Note', { exact: true })).toHaveValue('written here');
+  page.once('dialog', (dialog) => void dialog.accept());
+  await editor.getByRole('button', { name: 'Close' }).click();
+  await expect(editor).toHaveCount(0);
 });
