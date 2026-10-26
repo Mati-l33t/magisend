@@ -101,9 +101,14 @@ test('notes are written, titled, ticked off and shared', async ({ page }) => {
   await expect(editor.getByText(/could not be saved/)).toBeVisible();
   await expect(editor).toHaveCount(1);
   await expect(editor.getByLabel('Note', { exact: true })).toHaveValue('written here');
-  // Escape asks the same, and the text stays.
+  // Escape tries the save again, and the text stays.
+  const retried = page.waitForResponse(
+    (r) => r.url().includes('/api/library/notes/') && r.request().method() === 'PUT',
+  );
   await page.keyboard.press('Escape');
-  await expect(editor).toHaveCount(1);
+  expect((await retried).status()).toBe(409);
+  await expect(editor.getByText(/could not be saved/)).toBeVisible();
+  await expect(editor.getByLabel('Note', { exact: true })).toHaveValue('written here');
   await editor.getByRole('button', { name: 'Discard and close' }).click();
   await expect(editor).toHaveCount(0);
 });

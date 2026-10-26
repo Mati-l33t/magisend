@@ -58,6 +58,8 @@ export default function NoteEditor({
   // Closing found text it could not save: the user decides here.
   const [unsavedClose, setUnsavedClose] = useState(false);
   const finishing = useRef(false);
+  // Whether the last save failed: only then is closing refused.
+  const saveFailed = useRef(false);
   const left = useRef(false);
   // Server errors in a row while opening; a lasting one is said.
   const serverFailures = useRef(0);
@@ -77,6 +79,7 @@ export default function NoteEditor({
       const state = await api<{ text: string; version: number }>(
         '/api/library/files/' + note.id + '/text',
       );
+      serverFailures.current = 0;
       setText(state.text);
       Object.assign(latest.current, { text: state.text, version: state.version });
       if (!state.text) setMode('write');
@@ -86,7 +89,7 @@ export default function NoteEditor({
       // Waiting for its scan, the network was away or the server is
       // restarting: tried again. Anything else is said.
       const server = e instanceof ApiError && e.status >= 500;
-      serverFailures.current = server ? serverFailures.current + 1 : 0;
+      if (server) serverFailures.current++;
       if (
         e instanceof TypeError ||
         (e instanceof ApiError && e.status === 423) ||
@@ -151,10 +154,12 @@ export default function NoteEditor({
           current.version = result.version;
           setName(result.name);
         }
+        saveFailed.current = false;
         setStatus(current.dirty ? 'unsaved' : 'saved');
         changed();
       } catch (e) {
         current.dirty = true;
+        saveFailed.current = true;
         // Only an edit made elsewhere is a conflict; a full folder is not.
         if (e instanceof ApiError && e.code === 'text_conflict') setStatus('conflict');
         else setStatus('unsaved');
@@ -191,8 +196,10 @@ export default function NoteEditor({
       await save();
       // Text that could not be saved, after a conflict or in a full folder,
       // is only given up when the user says so.
+      // Typed while it saved: that is saved in a moment, and closing is
+      // asked again then.
       if (latest.current.dirty || saving.current) {
-        setUnsavedClose(true);
+        if (saveFailed.current) setUnsavedClose(true);
         return;
       }
       leave();
