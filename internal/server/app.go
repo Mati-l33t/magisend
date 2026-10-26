@@ -41,8 +41,10 @@ type App struct {
 	resumes map[string]time.Time
 	// Thumbnails decoded in a request because the queue was full.
 	thumbInline chan struct{}
-	unlockGates [unlockGateCount]chan struct{}
-	install     string
+	// Thumbnails browsers send are decoded a few at a time.
+	thumbUploads chan struct{}
+	unlockGates  [unlockGateCount]chan struct{}
+	install      string
 	// Installation IDs this machine had before; their backups are its own.
 	formerInstalls []string
 	// One picture conversion for a preview at a time, and two full decodes.
@@ -163,6 +165,7 @@ func NewApp(root, origin string) (*App, error) {
 	a.tokenUploads.user = map[string]int64{}
 	a.extracting = map[string]bool{}
 	a.thumbInline = make(chan struct{}, 2)
+	a.thumbUploads = make(chan struct{}, 2)
 	a.previewConvert = make(chan struct{}, 1)
 	a.previewDecode = make(chan struct{}, 2)
 	a.scanWake = make(chan struct{}, 1)

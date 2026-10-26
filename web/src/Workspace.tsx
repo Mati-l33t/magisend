@@ -53,6 +53,7 @@ import LibraryLinks from './LibraryLinks';
 import { RequestsPage } from './Requests';
 import FilePreview from './FilePreview';
 import FileThumb, { rasterName } from './FileThumb';
+import { useFollow } from './follow';
 import { thumbsFromUpload } from './thumbMaker';
 import LocalThumb from './LocalThumb';
 import SendLayout from './SendLayouts';
@@ -214,6 +215,8 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
     try {
       const all = await api<Share[]>('/api/shares');
       setShares(all);
+      // The link just made follows too, for its thumbnails.
+      setResult((current) => (current && all.find((s) => s.id === current.id)) || current);
       const wanted = extendId.current;
       if (wanted) {
         extendId.current = null;
@@ -239,6 +242,13 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
     addEventListener('focus', refresh);
     return () => removeEventListener('focus', refresh);
   }, [tab]);
+  // Files waiting for their virus scan get their thumbnails once it is done.
+  const waitingIds = [...shares, ...(result ? [result] : [])]
+    .flatMap((s) => s.files)
+    .filter((f) => f.scan === 'pending')
+    .map((f) => f.id)
+    .join(',');
+  useFollow(!!waitingIds && (tab === 'shares' || !!result), list, waitingIds);
   function select(incoming: File[]) {
     if (busy) return;
     setError('');

@@ -24,8 +24,7 @@ func validFilename(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		// Control characters, the C1 ones (U+0080–U+009F) included.
-		if c < 32 || c >= 127 && c <= 0x9f {
+		if c < 32 || c == 127 {
 			return false
 		}
 	}

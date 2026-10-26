@@ -83,6 +83,12 @@ func TestMergedSavesTakeTheirScanAlong(t *testing.T) {
 	if infected != 1 {
 		t.Fatal("the infected version was merged away")
 	}
+	// It is still in the history, and blocked there.
+	var number int
+	a.db.QueryRow("SELECT v.number FROM text_versions v JOIN file_scans s ON s.blob=v.blob WHERE v.file_id=? AND s.state='infected'", g.ID).Scan(&number)
+	if w := call(a, "GET", "/api/library/files/"+g.ID+"/history/"+itoa(number), "", admin); number == 0 || w.Code != 403 {
+		t.Fatal("the infected version is not blocked in the history", number, w.Code)
+	}
 }
 
 // A file opened in the editor can still be another file's new version.
@@ -109,13 +115,37 @@ func TestHeldNonTextSaysHeld(t *testing.T) {
 	}
 }
 
-// Windows-1252 names keep their signs; C1 control characters are refused.
-func TestCP1252NamesAndControls(t *testing.T) {
-	if name, _ := tarName("pris \x80 \x93ok\x94"); name != "pris € “ok”" {
-		t.Fatal(name)
+// Windows-1252 names keep their signs, C1 controls in UTF-8 names become
+// them too, and the undefined bytes stay distinct.
+func TestCP1252Names(t *testing.T) {
+	for in, want := range map[string]string{
+		"pris \x80 \x93ok\x94": "pris € “ok”",
+		"a\u0085b.txt":         "a…b.txt",
+		"M\x81ller":            "M%81ller",
+		"M\x8dller":            "M%8Dller",
+		"plain.txt":            "plain.txt",
+	} {
+		if got, _ := tarName(in); got != want {
+			t.Fatal(in, got)
+		}
 	}
-	if validFilename("a\u0085b.txt") {
-		t.Fatal("a C1 control was accepted")
+}
+
+// A waiting scan of a stored object that is no longer one of the file's
+// versions is dropped, not tried for ever.
+func TestScannerDropsScansOfGoneVersions(t *testing.T) {
+	a, admin := emailAdmin(t)
+	address, scans := fakeClamd(t, 1<<20)
+	setScanning(t, a, admin, "all", address, 50<<20)
+	f := libraryUpload(t, a, admin, "", "a.txt", "a").Files[0]
+	scanAllNow(a)
+	a.db.Exec("INSERT INTO file_scans(file_id,blob,state,queued) VALUES(?,?,'pending',1)", f.ID, randomID())
+	before := scans.Load()
+	scanAllNow(a)
+	var left int
+	a.db.QueryRow("SELECT COUNT(*) FROM file_scans WHERE file_id=? AND state='pending'", f.ID).Scan(&left)
+	if left != 0 || scans.Load() != before {
+		t.Fatal("a gone version's scan was kept", left)
 	}
 }
 

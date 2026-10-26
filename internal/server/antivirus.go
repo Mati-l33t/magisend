@@ -152,14 +152,21 @@ func (a *App) queueScansWhere(where, id string, received bool) {
 }
 
 // heldScans returns the files whose current contents are held back: waiting
-// for a scan (while scanning is on) or infected. Caller holds mu.
+// for a scan (while scanning is on) or infected. It is for showing them;
+// what serves bytes asks scanHeld. Caller holds mu.
 func (a *App) heldScans() map[string]string {
+	held, _ := a.heldScansChecked()
+	return held
+}
+
+// heldScansChecked is heldScans, with whether all of it could be read.
+func (a *App) heldScansChecked() (map[string]string, error) {
 	held := map[string]string{}
 	// Read first: the one database connection is busy while rows are open.
 	waiting := !a.scanningOff()
 	rows, e := a.db.Query(`SELECT s.file_id,s.state FROM file_scans s JOIN files f ON f.id=s.file_id WHERE s.state IN('pending','infected') AND s.blob=` + currentBlobSQL)
 	if e != nil {
-		return held
+		return held, e
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -170,8 +177,9 @@ func (a *App) heldScans() map[string]string {
 	}
 	if e := rows.Err(); e != nil {
 		log.Printf("antivirus: scan states could not be read: %v", e)
+		return held, e
 	}
-	return held
+	return held, nil
 }
 
 // scanHeld reports why one file's contents are held back, or "". Caller
@@ -388,14 +396,21 @@ func (a *App) scanNext(ctx context.Context) bool {
 	}
 	// When the result cannot be written, the worker stops until its next
 	// round instead of scanning the same file again at once.
+	// gone says the stored object stopped being scanned meanwhile (a merged
+	// save took its place), so nothing is reported for it.
+	gone := false
 	record := func(state, signature string) bool {
 		// By the stored object alone: it may have become another file's
 		// version meanwhile (stored objects are never shared).
-		e := exec(a, "UPDATE file_scans SET state=?,signature=?,scanned=? WHERE blob=?", state, signature, time.Now().Unix(), blob)
+		res, e := a.db.Exec("UPDATE file_scans SET state=?,signature=?,scanned=? WHERE blob=?", state, signature, time.Now().Unix(), blob)
 		if e != nil {
 			log.Printf("antivirus: the scan of file %s could not be saved: %v", id, e)
+			return false
 		}
-		return e == nil
+		if n, e := res.RowsAffected(); e == nil && n == 0 {
+			gone = true
+		}
+		return true
 	}
 	var file *os.File
 	path, e := a.fileBlob(id, blob)
@@ -455,6 +470,9 @@ func (a *App) scanNext(ctx context.Context) bool {
 	case signature != "":
 		if !record(scanInfected, signature) {
 			return false
+		}
+		if gone {
+			return true
 		}
 		a.scanState.Store(scanStatus{})
 		log.Printf("antivirus: %s found in file %s", signature, id)

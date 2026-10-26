@@ -6,6 +6,7 @@ import { folderLabel } from './folderTree';
 import { formatDate, t, useLanguage, useMessage } from './i18n';
 import MoreMenu, { type MenuItem } from './MoreMenu';
 import { noteTitle, type NoteRef } from './NoteEditor';
+import { ScanNote } from './ScanNote';
 
 export interface Note {
   id: string;
@@ -131,6 +132,7 @@ export default function Notes({
                     {n.starred && <Star size={13} fill="currentColor" />}
                     {noteTitle(n.name)}
                   </strong>
+                  {n.scan && <ScanNote scan={n.scan} />}
                   <span className="note-excerpt">
                     {preview(n).map((line, i) => (
                       <span

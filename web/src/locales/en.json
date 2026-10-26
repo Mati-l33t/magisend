@@ -1211,5 +1211,7 @@
   "antivirus.failDatabase": "the virus database could not be downloaded",
   "antivirus.needsSettings": "ClamAV on this server is not set up the way MagiSend needs: files it cannot scan whole (larger than its limits, such as Debian's 25 MB) may be reported clean. Apply the recommended settings to scan files up to 100 MB whole and to mark the rest unscanned.",
   "antivirus.applySettings": "Apply recommended settings",
-  "errors.replace_edited": "That file was edited and has versions of its own; choose a file that was not edited as the new version."
+  "errors.replace_edited": "That file was edited and has versions of its own; choose a file that was not edited as the new version.",
+  "antivirus.stepSettings": "Preparing ClamAV",
+  "antivirus.settingsFailed": "The recommended settings were not applied: {reason}"
 }

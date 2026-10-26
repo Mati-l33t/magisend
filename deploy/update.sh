@@ -168,8 +168,10 @@ clamd_set() { # key value: sets one clamd.conf setting
   fi
 }
 install_clamav() {
-  local memory installed package
+  local memory installed package started
   trap 'clamav_status failed stopped "The ClamAV installation stopped"; exit 1' ERR TERM INT HUP
+  # Said first, so the admin page sees the work going on.
+  clamav_status running settings "Preparing ClamAV"
   command -v apt-get > /dev/null || { clamav_status failed apt "ClamAV can only be installed here with apt"; exit 1; }
   memory=$(awk '/^MemTotal/ {print int($2 / 1024)}' /proc/meminfo)
   # Already installed (its settings or start being repaired): no packages
@@ -208,11 +210,18 @@ install_clamav() {
   clamav_status running starting "Starting ClamAV"
   systemctl enable clamav-daemon > /dev/null 2>&1 || true
   systemctl restart clamav-daemon > /dev/null 2>&1 || true
+  # The socket can exist before clamd answers (systemd may hold it), so it
+  # counts once the daemon itself has run for a few seconds as well.
+  started=0
   for _ in $(seq 1 90); do
-    [ -S /run/clamav/clamd.ctl ] && break
+    if [ -S /run/clamav/clamd.ctl ] && systemctl is-active --quiet clamav-daemon; then
+      sleep 5
+      systemctl is-active --quiet clamav-daemon && started=1
+      break
+    fi
     sleep 2
   done
-  [ -S /run/clamav/clamd.ctl ] || { clamav_status failed start "ClamAV did not start; see: journalctl -u clamav-daemon"; exit 1; }
+  [ "$started" = 1 ] || { clamav_status failed start "ClamAV did not start; see: journalctl -u clamav-daemon"; exit 1; }
   clamav_status success installed "ClamAV is installed and running"
   exit 0
 }
@@ -227,7 +236,10 @@ if [ -n "${INVOCATION_ID:-}" ]; then
   if [ -f "$REQUEST" ] && [ ! -L "$REQUEST" ] && [ -n "$(find "$REQUEST" -maxdepth 0 -mmin -20 2> /dev/null)" ]; then
     CLAMAV=1
   fi
-  # A run by hand leaves the request for the service.
+fi
+# A run by hand leaves the request for the service, unless it installs
+# ClamAV itself.
+if [ -n "${INVOCATION_ID:-}" ] || [ "$CLAMAV" = 1 ]; then
   rm -f -- "$REQUEST" 2> /dev/null || true
 fi
 if [ "$CLAMAV" = 1 ]; then

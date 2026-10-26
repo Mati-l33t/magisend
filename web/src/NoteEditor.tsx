@@ -47,7 +47,14 @@ export default function NoteEditor({
   const [loading, setLoading] = useState(!!note);
   // The note waits for its virus scan: read again once it is done.
   const [waiting, setWaiting] = useState(false);
-  const [status, setStatus] = useState<'saved' | 'saving' | 'unsaved' | 'conflict'>('saved');
+  const [scanning, setScanning] = useState(false);
+  const [status, setStatusState] = useState<'saved' | 'saving' | 'unsaved' | 'conflict'>('saved');
+  // The latest status, for finish() after a save it waited for.
+  const statusRef = useRef(status);
+  const setStatus = (next: typeof status) => {
+    statusRef.current = next;
+    setStatusState(next);
+  };
   const [error, setError] = useMessage();
   // The latest values, for saves that run after a render.
   const latest = useRef({ id, title, text, version: 0, dirty: false });
@@ -72,7 +79,9 @@ export default function NoteEditor({
       setWaiting(false);
       setLoading(false);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 423) {
+      // Waiting for its scan, or the network was away: tried again.
+      if ((e instanceof ApiError && e.status === 423) || !(e instanceof ApiError)) {
+        setScanning(e instanceof ApiError);
         setWaiting(true);
         return;
       }
@@ -158,7 +167,8 @@ export default function NoteEditor({
       return;
     }
     await save();
-    if (latest.current.dirty) return;
+    // A conflict cannot be saved: it was said, so closing is not refused.
+    if (latest.current.dirty && statusRef.current !== 'conflict') return;
     close();
   }
   function addChecklist() {
@@ -199,7 +209,7 @@ export default function NoteEditor({
           aria-label={t('notes.title')}
           value={title}
           maxLength={120}
-          readOnly={!editable}
+          readOnly={!editable || loading}
           placeholder={name && !title ? noteTitle(name) : t('notes.titlePlaceholder')}
           onChange={(e) => update({ title: e.target.value })}
         />
@@ -225,7 +235,7 @@ export default function NoteEditor({
             </label>
           ))}
         </div>
-        {editable && (
+        {editable && !loading && (
           <button
             className="icon-button"
             aria-label={t('notes.checklist')}
@@ -277,7 +287,7 @@ export default function NoteEditor({
       {loading ? (
         <p role="status" className="muted">
           <LoaderCircle className="spin" size={16} />{' '}
-          {waiting ? t('scan.pending') : t('preview.loading')}
+          {scanning ? t('scan.pending') : t('preview.loading')}
         </p>
       ) : mode === 'write' && editable ? (
         <textarea

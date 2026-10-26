@@ -136,9 +136,13 @@ func (a *App) noteRoutes(m *http.ServeMux) {
 		}
 		rows.Close()
 		// The opening of each note, for the list; not of one held back by its
-		// scan (or whose scan cannot be read).
+		// scan, and of none when the scans cannot be read.
+		held, heldErr := a.heldScansChecked()
 		for i := range list {
-			if list[i].Scan = a.scanHeld(list[i].ID); list[i].Scan != "" {
+			if list[i].Scan = held[list[i].ID]; heldErr != nil {
+				list[i].Scan = scanPending
+			}
+			if list[i].Scan != "" {
 				continue
 			}
 			if file, e := a.openCurrent(list[i].ID); e == nil {

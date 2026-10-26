@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -170,29 +171,50 @@ var errTooManyInArchive = errors.New("too many entries in the archive")
 
 // tarName is an entry's name as kept, or false when it is too long. A name
 // that is not UTF-8 is from an old archive and read as Windows-1252 (Latin-1
-// with typographic signs in 0x80–0x9F), as old tar files mostly were.
+// with typographic signs in 0x80–0x9F), as old tar files mostly were; the
+// invisible C1 control characters a UTF-8 name can hold become those signs
+// too.
 func tarName(name string) (string, bool) {
 	if len(name) > tarNameLimit {
 		return "", false
 	}
-	if utf8.ValidString(name) {
-		return strings.Clone(name), true
-	}
-	runes := make([]rune, len(name))
-	for i := 0; i < len(name); i++ {
-		runes[i] = rune(name[i])
-		if b := name[i]; b >= 0x80 && b <= 0x9f {
-			runes[i] = cp1252[b-0x80]
+	var b strings.Builder
+	sign := func(c byte) {
+		// The five bytes Windows-1252 leaves undefined stay distinct.
+		if r := cp1252[c-0x80]; r != 0 {
+			b.WriteRune(r)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
 		}
 	}
-	return string(runes), true
+	if utf8.ValidString(name) {
+		if !strings.ContainsFunc(name, func(r rune) bool { return r >= 0x80 && r <= 0x9f }) {
+			return strings.Clone(name), true
+		}
+		for _, r := range name {
+			if r >= 0x80 && r <= 0x9f {
+				sign(byte(r))
+			} else {
+				b.WriteRune(r)
+			}
+		}
+		return b.String(), true
+	}
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; c >= 0x80 && c <= 0x9f {
+			sign(c)
+		} else {
+			b.WriteRune(rune(c))
+		}
+	}
+	return b.String(), true
 }
 
-// cp1252 holds Windows-1252's signs for 0x80–0x9F; the five it leaves
-// undefined become "_".
+// cp1252 holds Windows-1252's signs for 0x80–0x9F; 0 marks the five it
+// leaves undefined.
 var cp1252 = [32]rune{
-	'€', '_', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '_', 'Ž', '_',
-	'_', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '_', 'ž', 'Ÿ',
+	'€', 0, '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', 0, 'Ž', 0,
+	0, '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', 0, 'ž', 'Ÿ',
 }
 
 // archivePlan picks what to unpack from an archive's contents. Folders,

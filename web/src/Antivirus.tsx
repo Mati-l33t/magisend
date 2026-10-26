@@ -33,7 +33,12 @@ interface ScanState {
     can_install: boolean;
     memory?: number;
     requested?: boolean;
-    progress?: { state: 'running' | 'success' | 'failed'; step?: string; message: string };
+    progress?: {
+      state: 'running' | 'success' | 'failed';
+      step?: string;
+      message: string;
+      time?: string;
+    };
     // ClamAV here lacks the settings the install gives it.
     needs_settings?: boolean;
   };
@@ -44,6 +49,7 @@ const clamavMemory = 2400;
 
 // The updater's steps, shown in the page's language.
 const installSteps: Record<string, string> = {
+  settings: 'antivirus.stepSettings',
   packages: 'antivirus.stepPackages',
   database: 'antivirus.stepDatabase',
   starting: 'antivirus.stepStarting',
@@ -52,6 +58,13 @@ const installSteps: Record<string, string> = {
   memory: 'antivirus.stepMemory',
   start: 'antivirus.stepStart',
 };
+// Whether an install attempt was within the last day: older failures are not
+// shown next to a running ClamAV.
+function recent(time?: string) {
+  const at = time ? Date.parse(time) : NaN;
+  return Number.isFinite(at) && Date.now() - at < 24 * 60 * 60 * 1000;
+}
+
 // A step that failed says what did not work.
 const failedSteps: Record<string, string> = {
   packages: 'antivirus.failPackages',
@@ -309,9 +322,9 @@ function ClamavStatus({
             <p>
               <ShieldAlert size={16} /> {t('antivirus.needsSettings')}
             </p>
-            {progress?.state === 'failed' && (
+            {progress?.state === 'failed' && recent(progress.time) && (
               <p className="error">
-                {t('antivirus.installFailed', { reason: stepText(progress) })}
+                {t('antivirus.settingsFailed', { reason: stepText(progress) })}
               </p>
             )}
             {clamav.can_install ? (

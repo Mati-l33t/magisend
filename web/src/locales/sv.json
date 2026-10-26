@@ -1211,5 +1211,7 @@
   "antivirus.failDatabase": "virusdatabasen kunde inte laddas ner",
   "antivirus.needsSettings": "ClamAV på den här servern är inte inställt som MagiSend behöver: filer som det inte kan skanna helt (större än dess gränser, som Debians 25 MB) kan rapporteras som rena. Använd de rekommenderade inställningarna så skannas filer upp till 100 MB helt och resten markeras som oskannade.",
   "antivirus.applySettings": "Använd rekommenderade inställningar",
-  "errors.replace_edited": "Den filen har redigerats och har egna versioner; välj en fil som inte har redigerats som ny version."
+  "errors.replace_edited": "Den filen har redigerats och har egna versioner; välj en fil som inte har redigerats som ny version.",
+  "antivirus.stepSettings": "Förbereder ClamAV",
+  "antivirus.settingsFailed": "De rekommenderade inställningarna tillämpades inte: {reason}"
 }

@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"errors"
 	"image"
@@ -106,7 +105,7 @@ func TestGenerateThumbnailOnlyForBoundedRasters(t *testing.T) {
 
 	picture := pngFixture(t, 64, 48)
 	fileID := seedStoredFile(t, a, picture, int64(len(picture)))
-	if e := a.generateThumbnail(context.Background(), fileID); e != nil {
+	if e := a.generateThumbnail(fileID, 0); e != nil {
 		t.Fatal(e)
 	}
 	var format string
@@ -121,20 +120,20 @@ func TestGenerateThumbnailOnlyForBoundedRasters(t *testing.T) {
 		t.Fatalf("unexpected thumbnail size %dx%d", width, height)
 	}
 	// Regeneration is idempotent and never replaces a good thumbnail.
-	if e := a.generateThumbnail(context.Background(), fileID); e != nil {
+	if e := a.generateThumbnail(fileID, 0); e != nil {
 		t.Fatal(e)
 	}
 
 	text := seedStoredFile(t, a, []byte("not an image at all"), 18)
-	if e := a.generateThumbnail(context.Background(), text); !errors.Is(e, errNoThumbnail) {
+	if e := a.generateThumbnail(text, 0); !errors.Is(e, errNoThumbnail) {
 		t.Fatalf("text produced a thumbnail: %v", e)
 	}
 	oversize := seedStoredFile(t, a, picture, previewMaxBytes+1)
-	if e := a.generateThumbnail(context.Background(), oversize); !errors.Is(e, errNoThumbnail) {
+	if e := a.generateThumbnail(oversize, 0); !errors.Is(e, errNoThumbnail) {
 		t.Fatalf("oversize file produced a thumbnail: %v", e)
 	}
 	mismatch := seedStoredFile(t, a, picture, int64(len(picture))+5)
-	if e := a.generateThumbnail(context.Background(), mismatch); !errors.Is(e, errNoThumbnail) {
+	if e := a.generateThumbnail(mismatch, 0); !errors.Is(e, errNoThumbnail) {
 		t.Fatalf("size mismatch produced a thumbnail: %v", e)
 	}
 	var count int
@@ -159,7 +158,7 @@ func TestAnimatedGIFThumbnailUsesFirstFrame(t *testing.T) {
 		t.Fatal(e)
 	}
 	fileID := seedStoredFile(t, a, encoded.Bytes(), int64(encoded.Len()))
-	if e := a.generateThumbnail(context.Background(), fileID); e != nil {
+	if e := a.generateThumbnail(fileID, 0); e != nil {
 		t.Fatal(e)
 	}
 	var width, height int

@@ -280,6 +280,7 @@ func TestClamdSettingsAreChecked(t *testing.T) {
 		"MaxFileSize 100M\nStreamMaxLength 100M\nAlertExceedsMax false\n":                            true,
 		"MaxFileSize 25M\nStreamMaxLength 100M\nAlertExceedsMax true\n":                              true,
 		"MaxFileSize 100M\nStreamMaxLength 100M\nMaxScanSize 400M\nAlertExceedsMax true\n":           false,
+		"MaxFileSize 100M\nStreamMaxLength 100M\nPCREMaxFileSize 25M\nAlertExceedsMax true\n":        true,
 		"# AlertExceedsMax true\nMaxFileSize 104857600\nStreamMaxLength 100M\nAlertExceedsMax yes\n": false,
 	} {
 		os.WriteFile(path, []byte(conf), 0600)

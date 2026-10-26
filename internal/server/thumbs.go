@@ -31,7 +31,7 @@ var errNoThumbnail = errors.New("no thumbnail")
 
 func (a *App) thumbnailWorker() {
 	for id := range a.thumbs {
-		if e := a.generateThumbnail(context.Background(), id); e != nil {
+		if e := a.generateThumbnail(id, 0); e != nil {
 			a.noteThumbnailFailure(id, e)
 		}
 	}
@@ -74,9 +74,7 @@ func (a *App) requestThumbnail(fileID string) {
 			return
 		}
 		// It waits only briefly for a decoding turn, which previews need more.
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if e := a.generateThumbnail(ctx, fileID); e != nil && !errors.Is(e, errThumbBusy) {
+		if e := a.generateThumbnail(fileID, 2*time.Second); e != nil && !errors.Is(e, errThumbBusy) {
 			a.noteThumbnailFailure(fileID, e)
 		}
 		return
@@ -128,14 +126,16 @@ func (a *App) hasThumbnail(fileID string) bool {
 	return a.db.QueryRow("SELECT COUNT(*) FROM thumbnails WHERE file_id=?", fileID).Scan(&count) == nil && count > 0
 }
 
-// Decoding stays outside mu: only the bounded read and the final insert touch
-// shared state, and a concurrent delete removes the row again through the
-// foreign key rather than leaving metadata for missing bytes.
 // errThumbBusy is a thumbnail that found no decoding turn in time; it is
 // asked for again on a later visit.
 var errThumbBusy = errors.New("no decoding turn")
 
-func (a *App) generateThumbnail(ctx context.Context, fileID string) error {
+// Decoding stays outside mu: only the bounded read and the final insert touch
+// shared state, and a concurrent delete removes the row again through the
+// foreign key rather than leaving metadata for missing bytes. It waits at
+// most wait for a decoding turn once the file is read (0: as long as it
+// takes).
+func (a *App) generateThumbnail(fileID string, wait time.Duration) error {
 	a.mu.Lock()
 	var size int64
 	var backend string
@@ -166,6 +166,12 @@ func (a *App) generateThumbnail(ctx context.Context, fileID string) error {
 	}
 	// Reuse the preview preflight so animated or malformed rasters never reach
 	// the encoder, then decode exactly the bytes that preflight accepted.
+	ctx := context.Background()
+	if wait > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, wait)
+		defer cancel()
+	}
 	release, turn := a.decodeSlot(ctx)
 	if !turn {
 		return errThumbBusy
@@ -252,9 +258,15 @@ func (a *App) putThumbnail(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "thumbnail_unavailable")
 		return
 	}
-	// At most thumbUploadMaxEdge on each side, so small enough to decode
-	// without a turn.
+	// At most thumbUploadMaxEdge on each side, so small to decode, but only
+	// a few at once all the same; others wait while their request lasts.
+	select {
+	case a.thumbUploads <- struct{}{}:
+	case <-r.Context().Done():
+		return
+	}
 	source, ok := decodeRaster(data)
+	<-a.thumbUploads
 	if !ok {
 		fail(w, 400, "thumbnail_unavailable")
 		return
