@@ -94,6 +94,11 @@ export default function LibraryShareDialog({
       setBusy(false);
     }
   }
+  const currentValidity = !share
+    ? ''
+    : share.expires === 0
+      ? t('share.neverExpires')
+      : t('share.expires', { date: formatDate(share.expires * 1000) });
   return (
     <Modal title={share ? t('library.manageShare') : t('library.share')} close={close}>
       <p>{live ? t('library.liveHint') : t('library.selectionHint')}</p>
@@ -123,20 +128,10 @@ export default function LibraryShareDialog({
             label={t('share.validity')}
             value={days}
             onChange={setDays}
-            hint={share && days !== UNCHANGED ? t('edit.fromToday') : undefined}
+            hint={!share ? undefined : days === UNCHANGED ? currentValidity : t('edit.fromToday')}
             options={[
               ...(share
-                ? [
-                    {
-                      value: UNCHANGED,
-                      label: t('edit.unchanged', {
-                        current:
-                          share.expires === 0
-                            ? t('share.neverExpires')
-                            : t('share.expires', { date: formatDate(share.expires * 1000) }),
-                      }),
-                    },
-                  ]
+                ? [{ value: UNCHANGED, label: t('edit.unchanged', { current: currentValidity }) }]
                 : []),
               ...validityOptions([daysDefault]),
             ]}

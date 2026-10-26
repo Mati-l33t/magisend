@@ -180,7 +180,7 @@ export function Select<T extends string | number>({
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={keyDown}
       >
-        <span className="select-value">
+        <span className="select-value" title={current?.label}>
           {current?.icon}
           {current?.label}
         </span>

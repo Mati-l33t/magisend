@@ -4376,3 +4376,47 @@ input.switch:checked::before {
   padding: 12px 0;
   color: var(--muted);
 }
+
+/* A copy button shows for a moment that it copied, or that it could not. */
+.copy-button {
+  position: relative;
+}
+.copy-button.copied {
+  color: var(--success);
+}
+.copy-button.failed {
+  color: var(--danger, #d64545);
+}
+.copy-note:empty {
+  display: none;
+}
+.copy-note {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 5;
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* A library file that a link shows now. */
+.shared-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  margin-top: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 600;
+}

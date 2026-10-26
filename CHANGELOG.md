@@ -2,6 +2,14 @@
 
 All notable changes to MagiSend are listed here. Versions follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+- **Text files in older encodings:** text saved by older Windows programs (Windows-1252, with å, ä and ö as single bytes) and UTF-16 text now open in the viewer instead of "cannot be previewed safely". The stored file is not changed.
+- **Copy buttons** show a check and "Copied" for a moment (or say that copying failed) everywhere: My shares, sent and library links, upload requests, API tokens and two-factor codes. The copy button in My shares now copies the link at once; the QR button still opens the link window.
+- **Shared mark:** files in the library that a link shows now (picked files, files in a shared folder, files kept from Send while their link lasts) are marked **Shared**.
+- **Validity period:** when editing a link or request, the current expiry is shown in full under the field, also on phones, and the whole choice shows on hover.
+- **Aurora top bar:** on screens where the floating menu would cover the search (TVs, laptops with display scaling), the menu shows only its icons, and if needed the search too.
+
 ## 1.0.10
 
 ClamAV can be installed and repaired from the admin page, and virus scanning now covers edited text, notes and unpacked files. Includes the fixes from five reviews of this work.

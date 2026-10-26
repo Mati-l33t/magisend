@@ -1,6 +1,6 @@
+import CopyButton from './CopyButton';
 import { useEffect, useState } from 'react';
-import { copyText } from './clipboard';
-import { Copy, Link2, Mail } from 'lucide-react';
+import { Link2, Mail } from 'lucide-react';
 import { api, shareUrl, type Capabilities, type Me, type Share } from './api';
 import { usePaged, ShowMore } from './Paging';
 import LibraryShareDialog from './LibraryShareDialog';
@@ -14,7 +14,6 @@ export default function LibraryLinks({ me, reload }: { me: Me; reload: () => Pro
   const [shares, setShares] = useState<Share[]>([]);
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState('');
   const [emailing, setEmailing] = useState<Share | null>(null);
   const [sharing, setSharing] = useState<{ share?: Share } | null>(null);
   const [error, setError] = useMessage();
@@ -47,15 +46,6 @@ export default function LibraryLinks({ me, reload }: { me: Me; reload: () => Pro
       setError(e as Error);
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function copyLink(share: Share) {
-    try {
-      await copyText(shareUrl(share));
-      setCopied(share.id);
-    } catch {
-      setCopied('');
     }
   }
 
@@ -107,13 +97,7 @@ export default function LibraryLinks({ me, reload }: { me: Me; reload: () => Pro
                 onFocus={(e) => e.currentTarget.select()}
               />
               <div className="row-actions">
-                <button
-                  className="icon-button"
-                  aria-label={copied === s.id ? t('share.copied') : t('share.copy')}
-                  onClick={() => void copyLink(s)}
-                >
-                  <Copy size={16} />
-                </button>
+                <CopyButton text={shareUrl(s)} label={t('share.copy')} />
                 {me.email_enabled && (
                   <button
                     className="icon-button"

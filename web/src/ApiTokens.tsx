@@ -1,6 +1,6 @@
+import CopyButton from './CopyButton';
 import { useEffect, useState } from 'react';
-import { copyText } from './clipboard';
-import { Copy, Download, KeyRound, Plus, Trash2 } from 'lucide-react';
+import { Download, KeyRound, Plus, Trash2 } from 'lucide-react';
 import { api } from './api';
 import { Modal } from './Modal';
 import { t, useLanguage, useMessage, formatDate } from './i18n';
@@ -107,13 +107,9 @@ export function ApiTokensDialog({ close }: { close: () => void }) {
             <textarea className="mono" readOnly rows={2} value={curl(fresh.token)} />
           </label>
           <div className="dialog-actions">
-            <button
-              className="secondary"
-              onClick={() => void copyText(fresh.token).catch(() => {})}
-            >
-              <Copy size={16} />
+            <CopyButton className="secondary" text={fresh.token} label={t('tokens.copy')}>
               {t('tokens.copy')}
-            </button>
+            </CopyButton>
             <button className="primary" onClick={() => sharex(fresh.token)}>
               <Download size={16} />
               {t('tokens.sharex')}

@@ -716,8 +716,19 @@
 .rail-toggle {
   display: none;
 }
-@media (min-width: 1025px) and (max-width: 1240px) {
-  :root[data-look='aurora'] .sidebar .nav-text {
+/* Set by auroraFit.ts when the floating menu would touch what is beside it. */
+@media (min-width: 1025px) {
+  :root[data-look='aurora'][data-crowded] .sidebar .nav-text {
+    display: none;
+  }
+  :root[data-look='aurora'][data-crowded='2'] .search-button {
+    justify-content: center;
+    width: 38px;
+    min-width: 0;
+    padding: 0;
+  }
+  :root[data-look='aurora'][data-crowded='2'] .search-button-text,
+  :root[data-look='aurora'][data-crowded='2'] .search-button kbd {
     display: none;
   }
 }

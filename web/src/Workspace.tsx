@@ -1,3 +1,5 @@
+import CopyButton from './CopyButton';
+import { useAuroraFit } from './auroraFit';
 import { useEffect, useState, useRef } from 'react';
 import { copyText } from './clipboard';
 import { usePaged, ShowMore } from './Paging';
@@ -100,6 +102,7 @@ function tabFromPath(): Tab {
 
 export default function Workspace({ me, reload }: { me: Me; reload: () => Promise<void> }) {
   useLanguage();
+  useAuroraFit();
   const look = useLook();
   const [railOpen, setRailOpen] = useState(() => {
     try {
@@ -1163,18 +1166,12 @@ export default function Workspace({ me, reload }: { me: Me; reload: () => Promis
                             <div className="card-actions">
                               {sh.published ? (
                                 <>
-                                  <button
-                                    className="icon-button"
+                                  <CopyButton
+                                    text={shareUrl(sh)}
+                                    size={17}
                                     disabled={busy}
-                                    aria-label={t('share.copyNamed', { title: sh.title })}
-                                    onClick={() => {
-                                      setResult(sh);
-                                      setFresh(false);
-                                      setQr(false);
-                                    }}
-                                  >
-                                    <Copy size={17} />
-                                  </button>
+                                    label={t('share.copyNamed', { title: sh.title })}
+                                  />
                                   <button
                                     className="icon-button"
                                     disabled={busy}

@@ -84,6 +84,8 @@ export interface LibraryFile extends SharedFile {
   share_id: string;
   starred?: boolean;
   received?: boolean;
+  // How many of the owner's links show the file now.
+  shared?: number;
   received_from?: string;
   received_via?: string;
   auto_title?: boolean;

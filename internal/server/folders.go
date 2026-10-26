@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -40,6 +41,8 @@ type LibraryFile struct {
 	ReceivedVia  string `json:"received_via,omitempty"`
 	// A note whose title follows its first line.
 	AutoTitle bool `json:"auto_title,omitempty"`
+	// How many of the owner's links show the file now.
+	Shared int `json:"shared,omitempty"`
 }
 
 func migrateFolders(db *sql.DB) error {
@@ -324,8 +327,11 @@ func (a *App) folderRoutes(m *http.ServeMux) {
 			return
 		}
 		held := a.heldScans()
+		// The mark is a convenience: the list never fails because of it.
+		shared, _ := a.sharedLibraryFiles(u.ID, time.Now().Unix())
 		for i := range files {
 			files[i].Scan = held[files[i].ID]
+			files[i].Shared = shared[files[i].ID]
 		}
 		respond(w, 200, files)
 	})

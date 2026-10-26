@@ -61,7 +61,8 @@ const imageResponse = () => ({
   headers: new Headers({ 'Content-Type': 'image/png' }),
   blob: async () => new Blob([imageBytes], { type: 'image/png' }),
 });
-const copyName = () => t('share.copyNamed', { title: permanent.title });
+// The link window opens from the QR button; the copy button copies at once.
+const linkWindowName = () => t('share.qrNamed', { title: permanent.title });
 const never = {
   en: /never expires|permanent/i,
   sv: /upphör aldrig|går aldrig ut|löper aldrig ut|utan (?:utgång|tidsgräns)|permanent/i,
@@ -192,7 +193,7 @@ for (const language of ['en', 'sv'] as const) {
       const datedCard = screen.getByRole('heading', { name: dated.title }).closest('article')!;
       expect(datedCard).toHaveTextContent(formatDate(dated.expires * 1000));
       expect(within(datedCard).queryByText(never[language])).not.toBeInTheDocument();
-      fireEvent.click(within(card).getByRole('button', { name: copyName() }));
+      fireEvent.click(within(card).getByRole('button', { name: linkWindowName() }));
       const dialog = await screen.findByRole('dialog', { name: t('share.ready') });
       expect(within(dialog).getByText(never[language])).toBeVisible();
       expectNotEpochOrExpired(dialog);

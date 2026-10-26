@@ -8,12 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
-// Text files shown as plain text in the viewer: a known text extension, at
-// most 20 MiB, valid UTF-8 and no NUL bytes. Served as text/plain, so nothing
-// in them is ever run or rendered; HTML shows as its source.
+// Text files shown as plain text in the viewer: a known text extension and at
+// most 20 MiB. Served as UTF-8 text/plain, so nothing in them is ever run or
+// rendered; HTML shows as its source. Text saved in older encodings is shown
+// too (see readableText); the stored file is never changed.
 const textPreviewMaxBytes = 20 << 20
 
 var textPreviewExtensions = map[string]bool{}
@@ -32,7 +34,45 @@ func textPreview(name string, size int64, file io.ReaderAt) ([]byte, bool) {
 	if n, e := file.ReadAt(data, 0); int64(n) != size || e != nil && e != io.EOF {
 		return nil, false
 	}
-	return data, utf8.Valid(data) && bytes.IndexByte(data, 0) < 0
+	return readableText(data)
+}
+
+// readableText is text as UTF-8 for the viewer. UTF-16 with its byte order
+// mark ("Unicode" in Windows Notepad) is converted; other text that is not
+// UTF-8 is read as Windows-1252, which older Windows programs saved (å, ä and
+// ö as single bytes). Anything with NUL bytes is not text.
+func readableText(data []byte) ([]byte, bool) {
+	if len(data) >= 2 && len(data)%2 == 0 && (data[0] == 0xff && data[1] == 0xfe || data[0] == 0xfe && data[1] == 0xff) {
+		units := make([]uint16, 0, len(data)/2-1)
+		for i := 2; i < len(data); i += 2 {
+			if data[0] == 0xff {
+				units = append(units, uint16(data[i])|uint16(data[i+1])<<8)
+			} else {
+				units = append(units, uint16(data[i])<<8|uint16(data[i+1]))
+			}
+		}
+		text := string(utf16.Decode(units))
+		return []byte(text), !strings.ContainsRune(text, 0)
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return nil, false
+	}
+	if utf8.Valid(data) {
+		return data, true
+	}
+	var b strings.Builder
+	b.Grow(len(data) + len(data)/8)
+	for _, c := range data {
+		switch {
+		case c < 0x80 || c >= 0xa0:
+			b.WriteRune(rune(c))
+		case cp1252[c-0x80] != 0:
+			b.WriteRune(cp1252[c-0x80])
+		default:
+			b.WriteRune(utf8.RuneError)
+		}
+	}
+	return []byte(b.String()), true
 }
 
 // Media previews: PDF documents, video and audio, served for the app's own

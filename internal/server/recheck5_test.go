@@ -96,3 +96,84 @@ func TestZipOverlongNameIsCounted(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// Text in older encodings is shown, as UTF-8; the file itself stays as it is.
+func TestTextInOlderEncodingsIsShown(t *testing.T) {
+	utf16le := []byte{0xff, 0xfe, 'H', 0, 0xe5, 0, 'j', 0}
+	utf16be := []byte{0xfe, 0xff, 0, 'H', 0, 0xe5, 0, 'j'}
+	for _, c := range []struct {
+		in   []byte
+		want string
+		ok   bool
+	}{
+		{[]byte("plain ascii"), "plain ascii", true},
+		{[]byte("Lösenord"), "Lösenord", true},
+		{[]byte("L\xf6senord \x80 \x96 \x81"), "Lösenord € – \ufffd", true},
+		{utf16le, "Håj", true},
+		{utf16be, "Håj", true},
+		{[]byte("a\x00b"), "", false},
+		{[]byte{0xff, 0xfe, 'a', 0, 0, 0}, "", false},
+	} {
+		got, ok := readableText(c.in)
+		if ok != c.ok || ok && string(got) != c.want {
+			t.Errorf("%q: %q %v, want %q %v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+
+	a := testApp(t)
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	id := libraryUpload(t, a, token, "", "Lösenord.txt", "L\xf6senord: hemligt").Files[0].ID
+	w := call(a, "GET", "/api/library/files/"+id+"/media", "", token)
+	if w.Code != 200 || w.Body.String() != "Lösenord: hemligt" || !strings.Contains(w.Header().Get("Content-Type"), "utf-8") {
+		t.Fatal(w.Code, w.Header(), w.Body)
+	}
+	if w := call(a, "GET", "/api/library/files/"+id+"/download", "", token); w.Body.String() != "L\xf6senord: hemligt" {
+		t.Fatal("the download changed", w.Body)
+	}
+}
+
+// The library says which files a link shows now: picked files, files in a
+// shared folder or below it, and files kept from Send while their link lasts.
+func TestLibraryMarksSharedFiles(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	work := folderCall(t, a, token, "POST", "/api/folders", `{"name":"Work"}`, 201)["id"].(string)
+	sub := folderCall(t, a, token, "POST", "/api/folders", `{"name":"Sub","parent_id":"`+work+`"}`, 201)["id"].(string)
+	top := libraryUpload(t, a, token, "", "top.txt", "top").Files[0].ID
+	deep := libraryUpload(t, a, token, sub, "deep.txt", "deep").Files[0].ID
+	alone := libraryUpload(t, a, token, "", "alone.txt", "alone").Files[0].ID
+	folderCall(t, a, token, "POST", "/api/library/shares", `{"files":["`+top+`","`+deep+`"]}`, 201)
+	folderCall(t, a, token, "POST", "/api/library/shares", `{"folder_id":"`+work+`"}`, 201)
+	old := folderCall(t, a, token, "POST", "/api/library/shares", `{"files":["`+alone+`"]}`, 201)["id"].(string)
+	a.db.Exec("UPDATE shares SET expires=1 WHERE id=?", old)
+	w := call(a, "POST", "/api/shares", `{"title":"Sent","days":7,"keep":true,"files":[{"name":"kept.txt","size":4}]}`, token)
+	var sent Share
+	if w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &sent) != nil {
+		t.Fatal(w.Code, w.Body)
+	}
+	chunk(a, token, sent.Files[0].ID, 0, "kept")
+	if w = call(a, "POST", "/api/shares/"+sent.ID+"/publish", "{}", token); w.Code != 200 {
+		t.Fatal(w.Code, w.Body)
+	}
+
+	shared := func() map[string]int {
+		var files []LibraryFile
+		json.Unmarshal(call(a, "GET", "/api/library/files", "", token).Body.Bytes(), &files)
+		got := map[string]int{}
+		for _, f := range files {
+			got[f.Name] = f.Shared
+		}
+		return got
+	}
+	got := shared()
+	if got["top.txt"] != 1 || got["deep.txt"] != 2 || got["alone.txt"] != 0 || got["kept.txt"] != 1 {
+		t.Fatal("marks", got)
+	}
+	// Once the link it went out with has expired, a kept file is not shared.
+	a.db.Exec("UPDATE shares SET expires=1 WHERE id=?", sent.ID)
+	if got = shared(); got["kept.txt"] != 0 {
+		t.Fatal("an expired link still marks its file", got)
+	}
+}

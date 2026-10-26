@@ -1,7 +1,7 @@
+import CopyButton from './CopyButton';
 import { useEffect, useState } from 'react';
-import { copyText } from './clipboard';
 import QRCode from 'qrcode';
-import { Copy, Download, LoaderCircle, ShieldCheck } from 'lucide-react';
+import { Download, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { api } from './api';
 import { Modal } from './Modal';
 import { t, useLanguage, useMessage, formatNumber } from './i18n';
@@ -190,13 +190,9 @@ export function TwoFactorDialog({ close, changed }: { close: () => void; changed
             ))}
           </ul>
           <div className="dialog-actions">
-            <button
-              className="secondary"
-              onClick={() => void copyText(codes.join('\n')).catch(() => {})}
-            >
-              <Copy size={16} />
+            <CopyButton className="secondary" text={codes.join('\n')} label={t('share.copy')}>
               {t('share.copy')}
-            </button>
+            </CopyButton>
             <button className="secondary" onClick={saveCodes}>
               <Download size={16} />
               {t('twoFactor.download')}

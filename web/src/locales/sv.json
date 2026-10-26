@@ -1217,5 +1217,8 @@
   "notes.closeUnsaved": "Din text kunde inte sparas. Kopiera den om du behöver den, eller släng den och stäng.",
   "notes.notReady": "Anteckningen kunde inte öppnas ännu. Stäng den och försök igen senare.",
   "errors.thumbnail_busy": "Servern är upptagen med miniatyrbilder; försök igen strax",
-  "notes.discardClose": "Släng och stäng"
+  "notes.discardClose": "Släng och stäng",
+  "copy.failed": "Kunde inte kopiera",
+  "library.shared": "Delad",
+  "library.sharedCount": "Delad i {count} länkar"
 }

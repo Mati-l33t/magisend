@@ -653,6 +653,12 @@ export default function Library({ me, reload }: { me: Me; reload: () => Promise<
               ? t('library.receivedFrom', { name: f.received_from })
               : t('library.receivedVia', { title: f.received_via || '' }))}
       </small>
+      {!!f.shared && (
+        <span className="shared-mark">
+          <Share2 size={12} aria-hidden="true" />
+          {f.shared > 1 ? t('library.sharedCount', { count: f.shared }) : t('library.shared')}
+        </span>
+      )}
       <ScanNote scan={f.scan} />
     </div>
   );

@@ -53,6 +53,62 @@ func (a *App) loadLibraryMembership(s *Share) error {
 	}
 	return rows.Err()
 }
+
+// sharedLibraryFiles counts, for each of owner's library files, the links
+// that show it now: published and not expired library links of the file or
+// of a folder above it, and the link a file kept from Send went out with.
+// Caller holds mu.
+func (a *App) sharedLibraryFiles(owner string, now int64) (map[string]int, error) {
+	type link struct{ id, mode, folder string }
+	var links []link
+	rows, e := a.db.Query(`SELECT s.id,COALESCE(ls.mode,''),COALESCE(ls.folder_id,'') FROM shares s LEFT JOIN library_shares ls ON ls.share_id=s.id WHERE s.owner=? AND s.published=1 AND (s.expires=0 OR s.expires>?) AND NOT EXISTS(SELECT 1 FROM deleting d WHERE d.share_id=s.id) AND NOT EXISTS(SELECT 1 FROM library_containers c WHERE c.share_id=s.id) AND NOT EXISTS(SELECT 1 FROM request_uploads ru WHERE ru.share_id=s.id)`, owner, now)
+	if e != nil {
+		return nil, e
+	}
+	for rows.Next() {
+		var l link
+		if e = rows.Scan(&l.id, &l.mode, &l.folder); e != nil {
+			rows.Close()
+			return nil, e
+		}
+		links = append(links, l)
+	}
+	rows.Close()
+	if e = rows.Err(); e != nil {
+		return nil, e
+	}
+	counts := map[string]int{}
+	for _, l := range links {
+		switch {
+		case l.mode == "live" && l.folder == "":
+			// Its folder was deleted.
+			continue
+		case l.mode == "live":
+			rows, e = a.db.Query(folderTree+`SELECT l.file_id FROM library_files l JOIN tree ON tree.id=l.folder_id`, l.folder)
+		case l.mode == "selection":
+			rows, e = a.db.Query(`SELECT file_id FROM library_selection WHERE share_id=?`, l.id)
+		default:
+			rows, e = a.db.Query(`SELECT f.id FROM files f JOIN library_files l ON l.file_id=f.id WHERE f.share_id=?`, l.id)
+		}
+		if e != nil {
+			return nil, e
+		}
+		for rows.Next() {
+			var id string
+			if e = rows.Scan(&id); e != nil {
+				rows.Close()
+				return nil, e
+			}
+			counts[id]++
+		}
+		rows.Close()
+		if e = rows.Err(); e != nil {
+			return nil, e
+		}
+	}
+	return counts, nil
+}
+
 func (a *App) libraryShareRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/library/shares", func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()

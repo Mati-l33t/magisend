@@ -93,7 +93,7 @@ export function EditShareDialog({
             label={t('share.validity')}
             value={days}
             onChange={setDays}
-            hint={days === UNCHANGED ? undefined : t('edit.fromToday')}
+            hint={days === UNCHANGED ? current : t('edit.fromToday')}
             options={[
               { value: UNCHANGED, label: t('edit.unchanged', { current }) },
               ...validityOptions([]),

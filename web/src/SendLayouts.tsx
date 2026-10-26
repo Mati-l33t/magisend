@@ -1,10 +1,8 @@
+import CopyButton from './CopyButton';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { copyText } from './clipboard';
 import {
   ArrowUpRight,
-  Check,
   Clock,
-  Copy,
   Download,
   FolderUp,
   Link,
@@ -414,20 +412,11 @@ function Trust() {
 
 // The last links you made, so the page is useful before anything is added.
 function RecentLinks({ s, cards }: { s: SendState; cards?: boolean }) {
-  const [copied, setCopied] = useState('');
   const now = Date.now() / 1000;
   const list = s.recent
     .filter((sh) => sh.published && !sh.mode && (sh.expires === 0 || sh.expires > now))
     .sort((a, b) => b.created - a.created)
     .slice(0, cards ? 3 : 4);
-  async function copy(sh: Share) {
-    try {
-      await copyText(shareUrl(sh));
-      setCopied(sh.id);
-    } catch {
-      setCopied('');
-    }
-  }
   return (
     <section className={'recent-links' + (cards ? ' as-cards' : ' panel')}>
       <header>
@@ -458,14 +447,7 @@ function RecentLinks({ s, cards }: { s: SendState; cards?: boolean }) {
                   {sh.expires === 0 ? t('share.neverExpires') : formatDate(sh.expires * 1000)}
                 </small>
               </span>
-              <button
-                className="icon-button"
-                aria-label={copied === sh.id ? t('share.copied') : t('share.copy')}
-                title={copied === sh.id ? t('share.copied') : t('share.copy')}
-                onClick={() => void copy(sh)}
-              >
-                {copied === sh.id ? <Check size={16} /> : <Copy size={16} />}
-              </button>
+              <CopyButton text={shareUrl(sh)} label={t('share.copy')} />
             </li>
           ))}
         </ul>

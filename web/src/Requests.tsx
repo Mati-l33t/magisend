@@ -1,7 +1,7 @@
+import CopyButton from './CopyButton';
 import { useEffect, useRef, useState } from 'react';
-import { copyText } from './clipboard';
 import { usePaged, ShowMore } from './Paging';
-import { Copy, Inbox, Folder as FolderIcon, LoaderCircle, Pencil, Plus, Save } from 'lucide-react';
+import { Inbox, Folder as FolderIcon, LoaderCircle, Pencil, Plus, Save } from 'lucide-react';
 import { api, formatBytes, type Folder, type Me } from './api';
 import { folderLabel, folderOptions } from './folderTree';
 import { Modal } from './Modal';
@@ -43,7 +43,6 @@ export function RequestsPanel({
   const [requests, setRequests] = useState<UploadRequest[]>([]);
   const pagedRequests = usePaged(requests);
   const [editing, setEditing] = useState<UploadRequest | 'new' | null>(null);
-  const [copied, setCopied] = useState('');
   const [error, setError] = useMessage();
   const seen = useRef(-1);
   async function load() {
@@ -71,14 +70,6 @@ export function RequestsPanel({
       await load();
     } catch (e) {
       setError(e as Error);
-    }
-  }
-  async function copy(q: UploadRequest) {
-    try {
-      await copyText(requestUrl(q));
-      setCopied(q.id);
-    } catch {
-      setCopied('');
     }
   }
   const folderName = (id: string) => (id && folderLabel(folders, id)) || t('library.unfiled');
@@ -136,15 +127,10 @@ export function RequestsPanel({
               onFocus={(e) => e.currentTarget.select()}
             />
             <div className="row-actions">
-              <button
-                className="icon-button"
-                aria-label={
-                  copied === q.id ? t('share.copied') : t('requests.copyNamed', { title: q.title })
-                }
-                onClick={() => void copy(q)}
-              >
-                <Copy size={16} />
-              </button>
+              <CopyButton
+                text={requestUrl(q)}
+                label={t('requests.copyNamed', { title: q.title })}
+              />
               <button
                 className="icon-button"
                 aria-label={t('requests.editNamed', { title: q.title })}
@@ -252,13 +238,9 @@ function RequestDialog({
           <input readOnly value={requestUrl(created)} onFocus={(e) => e.currentTarget.select()} />
         </label>
         <div className="dialog-actions">
-          <button
-            className="secondary"
-            onClick={() => void copyText(requestUrl(created)).catch(() => {})}
-          >
-            <Copy size={16} />
+          <CopyButton className="secondary" text={requestUrl(created)} label={t('share.copy')}>
             {t('share.copy')}
-          </button>
+          </CopyButton>
           <button className="primary" onClick={close}>
             {t('common.close')}
           </button>
@@ -311,6 +293,7 @@ function RequestDialog({
             label={t('requests.openFor')}
             value={days}
             onChange={setDays}
+            hint={request && days === UNCHANGED ? current : undefined}
             options={[
               ...(request ? [{ value: UNCHANGED, label: t('edit.unchanged', { current }) }] : []),
               ...validityOptions([me.policy.default_days]),

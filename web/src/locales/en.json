@@ -1217,5 +1217,8 @@
   "notes.closeUnsaved": "Your text could not be saved. Copy it if you need it, or discard it and close.",
   "notes.notReady": "The note could not be opened yet. Close it and try again later.",
   "errors.thumbnail_busy": "The server is busy making thumbnails; try again shortly",
-  "notes.discardClose": "Discard and close"
+  "notes.discardClose": "Discard and close",
+  "copy.failed": "Could not copy",
+  "library.shared": "Shared",
+  "library.sharedCount": "Shared in {count} links"
 }
