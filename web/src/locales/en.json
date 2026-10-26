@@ -1214,7 +1214,8 @@
   "errors.replace_edited": "That file was edited and has versions of its own; choose a file that was not edited as the new version.",
   "antivirus.stepSettings": "Preparing ClamAV",
   "antivirus.settingsFailed": "The recommended settings were not applied: {reason}",
-  "notes.closeUnsaved": "Your text is not saved. Close anyway and lose it? Copy it first if needed.",
+  "notes.closeUnsaved": "Your text could not be saved. Copy it if you need it, or discard it and close.",
   "notes.notReady": "The note could not be opened yet. Close it and try again later.",
-  "errors.thumbnail_busy": "The server is busy making thumbnails; try again shortly"
+  "errors.thumbnail_busy": "The server is busy making thumbnails; try again shortly",
+  "notes.discardClose": "Discard and close"
 }

@@ -4140,6 +4140,13 @@ input.switch:checked::before {
   color: var(--muted);
   font-size: 12px;
 }
+.note-unsaved {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
 .note-text {
   flex: 1;
   width: 100%;

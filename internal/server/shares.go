@@ -497,7 +497,8 @@ func (a *App) shareRoutes(m *http.ServeMux) {
 		a.queueScans(s.ID, false)
 		a.queueThumbnails(s.ID)
 		s.Published = true
-		// Read before the scans were queued: the page shown next follows them.
+		// s was read before its scans were queued; with their states now, the
+		// page shown next follows the files that wait.
 		held := a.heldScans()
 		for i := range s.Files {
 			s.Files[i].Scan = held[s.Files[i].ID]

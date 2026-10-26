@@ -55,6 +55,16 @@ export default function NoteEditor({
   const saving = useRef<Promise<void> | null>(null);
   const timer = useRef<number | undefined>(undefined);
   const area = useRef<HTMLTextAreaElement>(null);
+  // Closing found text it could not save: the user decides here.
+  const [unsavedClose, setUnsavedClose] = useState(false);
+  const finishing = useRef(false);
+  const left = useRef(false);
+  // Server errors in a row while opening; a lasting one is said.
+  const serverFailures = useRef(0);
+  const leave = () => {
+    left.current = true;
+    close();
+  };
 
   useEffect(() => {
     if (dialog.current?.showModal) dialog.current.showModal();
@@ -75,11 +85,14 @@ export default function NoteEditor({
     } catch (e) {
       // Waiting for its scan, the network was away or the server is
       // restarting: tried again. Anything else is said.
+      const server = e instanceof ApiError && e.status >= 500;
+      serverFailures.current = server ? serverFailures.current + 1 : 0;
       if (
         e instanceof TypeError ||
-        (e instanceof ApiError && (e.status === 423 || e.status >= 500))
+        (e instanceof ApiError && e.status === 423) ||
+        (server && serverFailures.current < 6)
       ) {
-        setScanning(e instanceof ApiError);
+        setScanning(e instanceof ApiError && e.status === 423);
         setWaiting(true);
         return;
       }
@@ -160,20 +173,32 @@ export default function NoteEditor({
     Object.assign(latest.current, next, { dirty: true });
     setStatus('unsaved');
     setError('');
+    setUnsavedClose(false);
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => void save(), 1200);
   }
+  // One close at a time: a second click or Escape while the first one saves
+  // is ignored, so it cannot close past what that save finds.
   async function finish() {
-    window.clearTimeout(timer.current);
-    if (note && !latest.current.version) {
-      close();
-      return;
+    if (finishing.current) return;
+    finishing.current = true;
+    try {
+      window.clearTimeout(timer.current);
+      if (note && !latest.current.version) {
+        leave();
+        return;
+      }
+      await save();
+      // Text that could not be saved, after a conflict or in a full folder,
+      // is only given up when the user says so.
+      if (latest.current.dirty || saving.current) {
+        setUnsavedClose(true);
+        return;
+      }
+      leave();
+    } finally {
+      finishing.current = false;
     }
-    await save();
-    // Text that could not be saved, after a conflict or in a full folder, is
-    // only given up when the user says so.
-    if (latest.current.dirty && !window.confirm(t('notes.closeUnsaved'))) return;
-    close();
   }
   function addChecklist() {
     const el = area.current;
@@ -204,6 +229,13 @@ export default function NoteEditor({
       aria-label={name ? noteTitle(name) : t('notes.new')}
       onCancel={(e) => {
         e.preventDefault();
+        void finish();
+      }}
+      // The browser may close it past onCancel (a second Escape in Chrome):
+      // it opens again, and closing goes the usual way.
+      onClose={() => {
+        if (left.current) return;
+        dialog.current?.showModal?.();
         void finish();
       }}
     >
@@ -286,6 +318,14 @@ export default function NoteEditor({
       {error && (
         <div role="alert" className="error">
           {error}
+        </div>
+      )}
+      {unsavedClose && (
+        <div className="note-unsaved">
+          <span>{t('notes.closeUnsaved')}</span>
+          <button className="secondary small" onClick={leave}>
+            {t('notes.discardClose')}
+          </button>
         </div>
       )}
       {loading && error ? null : loading ? (

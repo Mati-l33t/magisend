@@ -83,3 +83,16 @@ func TestZipNames(t *testing.T) {
 		}
 	}
 }
+
+// A ZIP entry with an overlong name is skipped and counted, as in a tar file.
+func TestZipOverlongNameIsCounted(t *testing.T) {
+	a := testApp(t)
+	setupAdmin(t, a)
+	token := login(t, a, "mati")
+	archive := zipOf(t, map[string]string{"short.txt": "kept", strings.Repeat("a", tarNameLimit+1): "long"})
+	id := libraryUpload(t, a, token, "", "Names.zip", archive).Files[0].ID
+	got := folderCall(t, a, token, "POST", "/api/library/files/"+id+"/extract", `{}`, 201)
+	if got["files"] != float64(1) || got["skipped"] != float64(1) {
+		t.Fatal(got)
+	}
+}

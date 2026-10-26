@@ -72,7 +72,15 @@ func zipItems(reader *zip.Reader) []archiveItem {
 	items := make([]archiveItem, 0, len(reader.File))
 	for _, f := range reader.File {
 		dir := f.FileInfo().IsDir() || strings.HasSuffix(strings.ReplaceAll(f.Name, "\\", "/"), "/")
-		items = append(items, archiveItem{name: zipName(f.Name), size: int64(f.UncompressedSize64), dir: dir, usable: f.Flags&1 == 0 && f.UncompressedSize64 <= 1<<62, zip: f})
+		// An overlong name is skipped and counted, as in a tar file.
+		usable := f.Flags&1 == 0 && f.UncompressedSize64 <= 1<<62
+		name := ""
+		if len(f.Name) <= tarNameLimit {
+			name = zipName(f.Name)
+		} else {
+			usable = false
+		}
+		items = append(items, archiveItem{name: name, size: int64(f.UncompressedSize64), dir: dir, usable: usable, zip: f})
 	}
 	return items
 }

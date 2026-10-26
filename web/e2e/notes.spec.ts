@@ -73,8 +73,8 @@ test('notes are written, titled, ticked off and shared', async ({ page }) => {
   await expect(page.locator('.public-note [data-task-line="1"]')).toBeChecked();
   await expect(page.locator('.public-note [data-task-line="1"]')).toBeDisabled();
 
-  // Changed elsewhere meanwhile: closing with unsaved text asks first, and
-  // the editor stays when the answer is no.
+  // Changed elsewhere meanwhile: closing with unsaved text keeps the editor
+  // open until the text is discarded.
   await page.goto('/library/notes');
   await shop.locator('.note-open').click();
   await editor.getByRole('radio', { name: 'Write' }).check();
@@ -95,17 +95,15 @@ test('notes are written, titled, ticked off and shared', async ({ page }) => {
     ).status(),
   ).toBe(200);
   await editor.getByLabel('Note', { exact: true }).fill('written here');
-  const asked: string[] = [];
-  page.once('dialog', (dialog) => {
-    asked.push(dialog.message());
-    void dialog.dismiss();
-  });
-  await editor.getByRole('button', { name: 'Close' }).click();
+  // A second click while the first close saves does not close past it.
+  await editor.getByRole('button', { name: 'Close' }).dblclick();
   await expect(editor.getByRole('status')).toHaveText(/Changed somewhere else/);
-  expect(asked).toEqual([expect.stringMatching(/not saved/)]);
+  await expect(editor.getByText(/could not be saved/)).toBeVisible();
   await expect(editor).toHaveCount(1);
   await expect(editor.getByLabel('Note', { exact: true })).toHaveValue('written here');
-  page.once('dialog', (dialog) => void dialog.accept());
-  await editor.getByRole('button', { name: 'Close' }).click();
+  // Escape asks the same, and the text stays.
+  await page.keyboard.press('Escape');
+  await expect(editor).toHaveCount(1);
+  await editor.getByRole('button', { name: 'Discard and close' }).click();
   await expect(editor).toHaveCount(0);
 });

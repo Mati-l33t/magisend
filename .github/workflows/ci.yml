@@ -38,7 +38,9 @@ jobs:
           go vet ./...
           go test -timeout 600s ./...
       - name: Shell scripts
-        run: shellcheck -S warning install.sh proxmox/install.sh deploy/update.sh scripts/build-release.sh
+        run: |
+          shellcheck -S warning install.sh proxmox/install.sh deploy/update.sh scripts/build-release.sh scripts/test-update.sh
+          sudo scripts/test-update.sh
 
   browser:
     runs-on: ubuntu-24.04

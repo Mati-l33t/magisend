@@ -32,6 +32,8 @@ ENV_FILE=/etc/magisend/environment
 BACKUP_DIR=/var/backups/magisend
 KEEP_BACKUPS=5
 SERVICE=magisend
+# Fixed for the whole run: a later name clash fails at once.
+readonly APP_DIR ENV_FILE BACKUP_DIR KEEP_BACKUPS SERVICE
 
 setting() { # value from the environment file, else from the service unit
   local value=""
@@ -252,19 +254,19 @@ install_clamav() {
 REQUEST="$DATA/.clamav-requested"
 CLAMAV=0
 [ "${1:-}" = --clamav ] && CLAMAV=1
-SERVICE=0
+BY_SERVICE=0
 if [ -n "${INVOCATION_ID:-}" ] &&
   [ "$INVOCATION_ID" = "$(systemctl show -p InvocationID --value magisend-update.service 2> /dev/null)" ]; then
-  SERVICE=1
+  BY_SERVICE=1
 fi
-if [ "$SERVICE" = 1 ]; then
+if [ "$BY_SERVICE" = 1 ]; then
   if [ -f "$REQUEST" ] && [ ! -L "$REQUEST" ] && [ -n "$(find "$REQUEST" -maxdepth 0 -mmin -20 2> /dev/null)" ]; then
     CLAMAV=1
   fi
 fi
 # A run by hand leaves the request for the service, unless it installs
 # ClamAV itself.
-if [ "$SERVICE" = 1 ] || [ "$CLAMAV" = 1 ]; then
+if [ "$BY_SERVICE" = 1 ] || [ "$CLAMAV" = 1 ]; then
   rm -f -- "$REQUEST" 2> /dev/null || true
 fi
 if [ "$CLAMAV" = 1 ]; then
